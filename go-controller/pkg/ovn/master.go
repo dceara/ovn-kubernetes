@@ -371,6 +371,19 @@ func (oc *Controller) SetupMaster(masterNodeName string) error {
 			return err
 		}
 
+		// Create a cluter-wide port group to deny all multicast traffic.
+		// This is different than the clusterPortGroup because it actually
+		// needs to include all POD logical ports.  We don't use the
+		// clusterPortGroup because we don't want OVN to reinstall all flows
+		// referring the custerPortGroup (including reject ACLs) every time a
+		// POD is added/removed.
+		oc.clusterPortGroupMcastDenyUUID, err = createPortGroup(clusterPortGroupMcastDenyName,
+			clusterPortGroupMcastDenyName)
+		if err != nil {
+			klog.Errorf("Failed to create cluster multicast deny port group: %v", err)
+			return err
+		}
+
 		// Drop IP multicast globally. Multicast is allowed only if explicitly
 		// enabled in a namespace.
 		if err := oc.createDefaultDenyMulticastPolicy(); err != nil {

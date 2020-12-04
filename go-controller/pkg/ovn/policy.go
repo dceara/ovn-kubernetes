@@ -333,23 +333,35 @@ func (oc *Controller) createDefaultDenyMulticastPolicy() error {
 	// By default deny any egress multicast traffic from any pod. This drops
 	// IP multicast membership reports therefore denying any multicast traffic
 	// to be forwarded to pods.
-	match := "match=\"ip4.mcast\""
-	err := addACLPortGroup(oc.clusterPortGroupUUID, fromLport,
-		defaultMcastDenyPriority, match, "drop", knet.PolicyTypeEgress)
+	match := getACLMatch(clusterPortGroupMcastDenyName, "ip4.mcast", knet.PolicyTypeEgress)
+	err := addACLPortGroup(oc.clusterPortGroupMcastDenyUUID, fromLport, defaultMcastDenyPriority,
+		match, "drop", knet.PolicyTypeEgress)
 	if err != nil {
 		return fmt.Errorf("failed to create default deny multicast egress ACL: %v", err)
 	}
 
 	// By default deny any ingress multicast traffic to any pod.
-	err = addACLPortGroup(oc.clusterPortGroupUUID, toLport,
-		defaultMcastDenyPriority, match, "drop", knet.PolicyTypeIngress)
+	match = getACLMatch(clusterPortGroupMcastDenyName, "ip4.mcast", knet.PolicyTypeIngress)
+	err = addACLPortGroup(oc.clusterPortGroupMcastDenyUUID, toLport, defaultMcastDenyPriority,
+		match, "drop", knet.PolicyTypeIngress)
 	if err != nil {
 		return fmt.Errorf("failed to create default deny multicast ingress ACL: %v", err)
 	}
 
-	// Remove old multicastDefaultDeny port group now that all ports
-	// have been added to the clusterPortGroup by WatchPods()
-	deletePortGroup("mcastPortGroupDeny")
+	return nil
+}
+
+func podAddDefaultDenyMulticastPolicy(portInfo *lpInfo) error {
+	if err := addToPortGroup("mcastPortGroupDeny", portInfo); err != nil {
+		return fmt.Errorf("failed to add port %s to default multicast deny ACL: %v", portInfo.name, err)
+	}
+	return nil
+}
+
+func podDeleteDefaultDenyMulticastPolicy(portInfo *lpInfo) error {
+	if err := deleteFromPortGroup("mcastPortGroupDeny", portInfo); err != nil {
+		return fmt.Errorf("failed to delete port %s from default multicast deny ACL: %v", portInfo.name, err)
+	}
 	return nil
 }
 

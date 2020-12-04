@@ -44,6 +44,7 @@ import (
 const (
 	egressfirewallCRD                string        = "egressfirewalls.k8s.ovn.org"
 	clusterPortGroupName             string        = "clusterPortGroup"
+	clusterPortGroupMcastDenyName    string        = "mcastPortGroupDeny"
 	egressFirewallDNSDefaultDuration time.Duration = 30 * time.Minute
 )
 
@@ -143,8 +144,11 @@ type Controller struct {
 	// An address set factory that creates address sets
 	addressSetFactory AddressSetFactory
 
-	// Port group for all cluster logical switch ports
+	// Port group for all cluster logical switches (includes only mgmt ports)
 	clusterPortGroupUUID string
+
+	// Port group for all cluster logical switch ports used for multicast
+	clusterPortGroupMcastDenyUUID string
 
 	// Port group for ingress deny rule
 	portGroupIngressDeny string
