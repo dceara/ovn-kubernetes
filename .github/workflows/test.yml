@@ -147,8 +147,8 @@ jobs:
         target:
           - shard: shard-conformance
             hybrid-overlay: false
-          - shard: control-plane
-            hybrid-overlay: true
+          # - shard: control-plane
+          #   hybrid-overlay: true
         ha:
          - enabled: "true"
            name: "HA"
@@ -156,18 +156,18 @@ jobs:
            name: "noHA"
         gateway-mode: [local, shared]
         ipfamily:
-         - ip: ipv4
-           name: "IPv4"
-           ipv4: true
-           ipv6: false
+        #  - ip: ipv4
+        #    name: "IPv4"
+        #    ipv4: true
+        #    ipv6: false
          - ip: ipv6
            name: "IPv6"
            ipv4: false
            ipv6: true
-         - ip: dualstack
-           name: "Dualstack"
-           ipv4: true
-           ipv6: true
+        #  - ip: dualstack
+        #    name: "Dualstack"
+        #    ipv4: true
+        #    ipv6: true
         # Example of how to exclude a fully qualified test:
         # - {"ipfamily": {"ip": ipv4}, "ha": {"enabled": "false"}, "gateway-mode": shared, "target": {"shard": shard-n-other}}
         exclude:
