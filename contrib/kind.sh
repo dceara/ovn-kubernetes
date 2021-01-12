@@ -324,7 +324,7 @@ if [ "$OVN_IMAGE" == local ]; then
   BINS=$(find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f | xargs)
   sudo cp -f ${BINS} .
   echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-  docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
+  docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora.dev .
   OVN_IMAGE=ovn-daemonset-f:dev
   popd
 fi
