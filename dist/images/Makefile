@@ -38,7 +38,7 @@ centos: bld
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset:latest
 
 fedora: bld
-	docker build -t ovn-kube-f -f Dockerfile.fedora .
+	docker build -t ovn-kube-f -f Dockerfile.fedora.dev .
 	# docker login -u ovnkube docker.io/ovnkube
 	# docker push docker.io/ovnkube/ovn-daemonset-f:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-f:latest

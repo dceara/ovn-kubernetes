@@ -48,7 +48,7 @@ jobs:
         pushd dist/images
           sudo cp -f ../../go-controller/_output/go/bin/ovn* .
           echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
-          docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora .
+          docker build -t ovn-daemonset-f:dev -f Dockerfile.fedora.dev .
           mkdir _output
           docker save ovn-daemonset-f:dev > _output/image.tar
         popd
