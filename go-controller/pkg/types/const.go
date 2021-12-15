@@ -43,6 +43,8 @@ const (
 
 	NodeLocalSwitch = "node_local_switch"
 
+	GlobalAz = "global-az"
+
 	// ACL directions
 	DirectionToLPort   = "to-lport"
 	DirectionFromLPort = "from-lport"

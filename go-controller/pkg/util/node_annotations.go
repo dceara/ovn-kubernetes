@@ -12,6 +12,7 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
 
 // This handles the annotations used by the node to pass information about its local
@@ -67,6 +68,8 @@ const (
 	// capacity for each node. It is set by
 	// openshift/cloud-network-config-controller
 	cloudEgressIPConfigAnnotationKey = "cloud.network.openshift.io/egress-ipconfig"
+
+	ovnNodeAzName = "k8s.ovn.org/ovn-az-name"
 )
 
 type L3GatewayConfig struct {
@@ -492,4 +495,14 @@ func ParseNodeHostAddresses(node *kapi.Node) (sets.String, error) {
 	}
 
 	return sets.NewString(cfg...), nil
+}
+
+func IsNodeGlobalAz(node *kapi.Node) bool {
+	azName, ok := node.Annotations[ovnNodeAzName]
+	if !ok {
+		// If the annotation is not set, then consider node as part of global AZ
+		return true
+	}
+
+	return azName == types.GlobalAz
 }
