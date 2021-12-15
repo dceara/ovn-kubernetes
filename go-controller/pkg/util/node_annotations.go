@@ -474,3 +474,7 @@ func IsNodeGlobalAz(node *kapi.Node) bool {
 
 	return azName == types.GlobalAz
 }
+
+func SetNodeAzName(nodeAnnotator kube.Annotator, azName string) error {
+	return nodeAnnotator.Set(ovnNodeAzName, azName)
+}
