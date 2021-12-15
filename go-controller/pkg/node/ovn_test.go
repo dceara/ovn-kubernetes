@@ -69,6 +69,6 @@ func (o *FakeOVNNode) init() {
 	o.watcher, err = factory.NewNodeWatchFactory(o.fakeClient, fakeNodeName)
 	Expect(err).NotTo(HaveOccurred())
 
-	o.node = NewNode(o.fakeClient.KubeClient, o.watcher, fakeNodeName, o.stopChan, o.recorder)
+	o.node = NewNode(o.fakeClient.KubeClient, o.watcher, fakeNodeName, o.stopChan, o.recorder, "global-az")
 	o.node.Start(o.wg)
 }

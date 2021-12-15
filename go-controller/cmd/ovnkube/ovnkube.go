@@ -276,7 +276,13 @@ func runOvnKube(ctx *cli.Context) error {
 		// register ovnkube node specific prometheus metrics exported by the node
 		metrics.RegisterNodeMetrics()
 		start := time.Now()
-		n := ovnnode.NewNode(ovnClientset.KubeClient, nodeWatchFactory, node, stopChan, util.EventRecorder(ovnClientset.KubeClient))
+		var azName string
+		if local != "" {
+			azName = types.GlobalAz
+		} else {
+			azName = node
+		}
+		n := ovnnode.NewNode(ovnClientset.KubeClient, nodeWatchFactory, node, stopChan, util.EventRecorder(ovnClientset.KubeClient), azName)
 		if err := n.Start(wg); err != nil {
 			return err
 		}
