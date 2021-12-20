@@ -547,6 +547,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations with IP Address Family", f
 								namespace1,
 							},
 						},
+						&v1.NodeList{
+							Items: []v1.Node{
+								*newNode("node1", "192.168.126.202/24"),
+							},
+						},
 						&v1.PodList{
 							Items: pods,
 						},
@@ -626,6 +631,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations with IP Address Family", f
 						&v1.NamespaceList{
 							Items: []v1.Namespace{
 								namespace1,
+							},
+						},
+						&v1.NodeList{
+							Items: []v1.Node{
+								*newNode("node1", "192.168.126.202/24"),
 							},
 						},
 					)
@@ -938,6 +948,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 							namespace1,
 						},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{
 							*newPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP),
@@ -1150,6 +1165,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					&v1.NamespaceList{
 						Items: []v1.Namespace{namespace1},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{*nPod},
 					},
@@ -1281,6 +1301,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					&v1.NamespaceList{
 						Items: []v1.Namespace{namespace1},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{*nPod},
 					},
@@ -1392,6 +1417,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 						Items: []v1.Namespace{
 							namespace1,
 							namespace2,
+						},
+					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
 						},
 					},
 					&v1.PodList{
@@ -1575,6 +1605,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 							namespace1,
 						},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{
 							*newPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP),
@@ -1691,6 +1726,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 							namespace2,
 						},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{
 							*newPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP),
@@ -1798,6 +1838,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 							namespace2,
 						},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{
 							*newPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP),
@@ -1896,6 +1941,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 							namespace1,
 						},
 					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
+						},
+					},
 					&v1.PodList{
 						Items: []v1.Pod{
 							*newPod(nPodTest.namespace, nPodTest.podName, nPodTest.nodeName, nPodTest.podIP),
@@ -1988,6 +2038,11 @@ var _ = ginkgo.Describe("OVN NetworkPolicy Operations", func() {
 					&v1.NamespaceList{
 						Items: []v1.Namespace{
 							namespace1,
+						},
+					},
+					&v1.NodeList{
+						Items: []v1.Node{
+							*newNode("node1", "192.168.126.202/24"),
 						},
 					},
 					&v1.PodList{
