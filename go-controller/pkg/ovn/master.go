@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1404,6 +1405,7 @@ func (oc *Controller) syncNodes(nodes []interface{}) {
 // Upon failure, it may be invoked multiple times in order to avoid a pod restart.
 func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 	foundNodes := sets.NewString()
+
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
 		if !ok {
@@ -1426,6 +1428,13 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 		if err != nil {
 			// TODO (flaviof): keep going even if EnsureJoinLRPIPs returned an error. Maybe we should not.
 			klog.Errorf("Failed to get join switch port IP address for node %s: %v", node.Name, err)
+		}
+
+		if !oc.local {
+			nodeId := util.GetNodeId(node)
+			if nodeId != -1 {
+				_, _ = oc.azIdBitmap.Allocate(int(nodeId))
+			}
 		}
 	}
 	metrics.RecordSubnetUsage(oc.v4HostSubnetsUsed, oc.v6HostSubnetsUsed)
@@ -1490,5 +1499,27 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 	if err := libovsdbops.DeleteNodeChassis(oc.sbClient, staleChassis.List()...); err != nil {
 		return fmt.Errorf("failed deleting chassis %v error: %v", staleChassis.List(), err)
 	}
+	return nil
+}
+
+func (oc *Controller) syncNodeId(node *kapi.Node, deleted bool) error {
+	if oc.local {
+		return nil
+	}
+	klog.Infof("syncNodeAzId entered for node %q", node.Name)
+	nodeId := util.GetNodeId(node)
+	klog.Infof("syncNodeAz Id for node %q is %d", node.Name, nodeId)
+
+	if nodeId == -1 {
+		id, allocated, _ := oc.azIdBitmap.AllocateNext()
+		klog.Infof("syncNodeAz Id allocated for node %q is %d", node.Name, id)
+		if allocated {
+			klog.Infof("syncNodeAz : Setting Id for node %q in annotations", node.Name)
+			_ = oc.kube.SetAnnotationsOnNode(node.Name, map[string]interface{}{util.OvnNodeId: strconv.Itoa(id)})
+		}
+	} else if deleted {
+		_ = oc.azIdBitmap.Release(nodeId)
+	}
+
 	return nil
 }
