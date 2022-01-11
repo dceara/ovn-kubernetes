@@ -314,7 +314,7 @@ func NewJoinIPAMAllocator(cidr *net.IPNet) (ipam.Interface, error) {
 
 // Initializes a new join switch logical switch manager.
 // This IPmanager guaranteed to always have both IPv4 and IPv6 regardless of dual-stack
-func NewJoinLogicalSwitchIPManager(nbClient libovsdbclient.Client, existingNodeNames []string) (*JoinSwitchIPManager, error) {
+func NewJoinLogicalSwitchIPManager(nbClient libovsdbclient.Client, existingNodeNames []string, offset int) (*JoinSwitchIPManager, error) {
 	j := JoinSwitchIPManager{
 		lsm: &LogicalSwitchManager{
 			cache:    make(map[string]logicalSwitchInfo),
@@ -323,22 +323,11 @@ func NewJoinLogicalSwitchIPManager(nbClient libovsdbclient.Client, existingNodeN
 		nbClient:   nbClient,
 		lrpIPCache: make(map[string][]*net.IPNet),
 	}
-	var joinSubnets []*net.IPNet
-	joinSubnetsConfig := []string{}
-	if config.IPv4Mode {
-		joinSubnetsConfig = append(joinSubnetsConfig, config.Gateway.V4JoinSubnet)
+	joinSubnets, err := config.GetJoinSubnets(offset)
+	if err != nil {
+		return nil, err
 	}
-	if config.IPv6Mode {
-		joinSubnetsConfig = append(joinSubnetsConfig, config.Gateway.V6JoinSubnet)
-	}
-	for _, joinSubnetString := range joinSubnetsConfig {
-		_, joinSubnet, err := net.ParseCIDR(joinSubnetString)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing join subnet string %s: %v", joinSubnetString, err)
-		}
-		joinSubnets = append(joinSubnets, joinSubnet)
-	}
-	err := j.lsm.AddNode(types.OVNJoinSwitch, joinSubnets)
+	err = j.lsm.AddNode(types.OVNJoinSwitch, joinSubnets)
 	if err != nil {
 		return nil, err
 	}
