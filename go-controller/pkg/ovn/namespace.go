@@ -109,6 +109,26 @@ func (oc *Controller) addPodToNamespace(ns string, ips []*net.IPNet) (*gatewayIn
 	return oc.getRoutingExternalGWs(nsInfo), oc.getRoutingPodGWs(nsInfo), nil
 }
 
+func (oc *Controller) addRemotePodToNamespace(ns string, ips []*net.IPNet) error {
+	_, _, err := oc.addPodToNamespace(ns, ips)
+	return err
+}
+
+func (oc *Controller) deleteRemotePodFromNamespace(ns string, ips []*net.IPNet) error {
+	nsInfo, nsUnlock := oc.getNamespaceLocked(ns, true)
+	if nsInfo == nil {
+		return nil
+	}
+	defer nsUnlock()
+
+	if nsInfo.addressSet != nil {
+		if err := nsInfo.addressSet.DeleteIPs(createIPAddressSlice(ips)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (oc *Controller) deletePodFromNamespace(ns string, portInfo *lpInfo) error {
 	nsInfo, nsUnlock := oc.getNamespaceLocked(ns, true)
 	if nsInfo == nil {
