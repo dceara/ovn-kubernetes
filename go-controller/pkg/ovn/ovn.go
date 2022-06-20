@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdbops"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
+
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	hocontroller "github.com/ovn-org/ovn-kubernetes/go-controller/hybrid-overlay/pkg/controller"
@@ -20,6 +23,8 @@ import (
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/unidling"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/interconnect"
+	bitmapallocator "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/ipallocator/allocator"
 	corev1listers "k8s.io/client-go/listers/core/v1"
 
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
@@ -100,6 +105,10 @@ type Controller struct {
 	kube         kube.Interface
 	watchFactory *factory.WatchFactory
 	stopChan     <-chan struct{}
+
+	// If the Controller is running in local AZ or in global AZ mode
+	local    bool
+	nodeName string
 
 	// FIXME DUAL-STACK -  Make IP Allocators more dual-stack friendly
 	masterSubnetAllocator *subnetallocator.SubnetAllocator
@@ -226,6 +235,11 @@ type Controller struct {
 	nodeClusterRouterPortFailed sync.Map
 
 	podRecorder metrics.PodRecorder
+
+	azIdBitmap    *bitmapallocator.AllocationBitmap
+	azIdCache     map[string]int
+	azIdCacheLock sync.Mutex
+	icController  *interconnect.Controller
 }
 
 const (
@@ -262,19 +276,29 @@ func getPodNamespacedName(pod *kapi.Pod) string {
 // infrastructure and policy
 func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory, stopChan <-chan struct{}, addressSetFactory addressset.AddressSetFactory,
 	libovsdbOvnNBClient libovsdbclient.Client, libovsdbOvnSBClient libovsdbclient.Client,
-	recorder record.EventRecorder) *Controller {
+	recorder record.EventRecorder, local bool, nodeName string) *Controller {
 	if addressSetFactory == nil {
 		addressSetFactory = addressset.NewOvnAddressSetFactory(libovsdbOvnNBClient)
 	}
 	svcController, svcFactory := newServiceController(ovnClient.KubeClient, libovsdbOvnNBClient)
+	azIdBitmap := bitmapallocator.NewContiguousAllocationMap(ovntypes.AzMax, "az")
+	_, _ = azIdBitmap.Allocate(ovntypes.GlobalAzID)
+
+	kube := &kube.Kube{
+		KClient:              ovnClient.KubeClient,
+		EIPClient:            ovnClient.EgressIPClient,
+		EgressFirewallClient: ovnClient.EgressFirewallClient,
+		CloudNetworkClient:   ovnClient.CloudNetworkClient,
+	}
+
+	icConnect := interconnect.NewController(
+		ovnClient.KubeClient, kube, libovsdbOvnNBClient, libovsdbOvnSBClient)
+
 	return &Controller{
-		client: ovnClient.KubeClient,
-		kube: &kube.Kube{
-			KClient:              ovnClient.KubeClient,
-			EIPClient:            ovnClient.EgressIPClient,
-			EgressFirewallClient: ovnClient.EgressFirewallClient,
-			CloudNetworkClient:   ovnClient.CloudNetworkClient,
-		},
+		client:                ovnClient.KubeClient,
+		kube:                  kube,
+		local:                 local,
+		nodeName:              nodeName,
 		watchFactory:          wf,
 		stopChan:              stopChan,
 		masterSubnetAllocator: subnetallocator.NewSubnetAllocator(),
@@ -318,6 +342,9 @@ func NewOvnController(ovnClient *util.OVNClientset, wf *factory.WatchFactory, st
 		svcController:             svcController,
 		svcFactory:                svcFactory,
 		podRecorder:               metrics.NewPodRecorder(),
+		azIdBitmap:                azIdBitmap,
+		azIdCache:                 make(map[string]int),
+		icController:              icConnect,
 	}
 }
 
@@ -354,6 +381,10 @@ func (oc *Controller) Run(ctx context.Context, wg *sync.WaitGroup) error {
 
 	// Services should be started after nodes to prevent LB churn
 	if err := oc.StartServiceController(wg, true); err != nil {
+		return err
+	}
+
+	if err := oc.StartInterconnectController(wg); err != nil {
 		return err
 	}
 
@@ -504,11 +535,57 @@ func networkStatusAnnotationsChanged(oldPod, newPod *kapi.Pod) bool {
 	return oldPod.Annotations[nettypes.NetworkStatusAnnot] != newPod.Annotations[nettypes.NetworkStatusAnnot]
 }
 
+func (oc *Controller) isPodRelevant(pod *kapi.Pod) bool {
+	if oc.local {
+		return pod.Spec.NodeName == oc.nodeName
+	}
+
+	node, err := oc.kube.GetNode(pod.Spec.NodeName)
+	if err != nil {
+		return pod.Spec.HostNetwork
+	}
+
+	return util.IsNodeGlobalAz(node)
+}
+
 // ensurePod tries to set up a pod. It returns nil on success and error on failure; failure
 // indicates the pod set up should be retried later.
 func (oc *Controller) ensurePod(oldPod, pod *kapi.Pod, addPort bool) error {
 	// Try unscheduled pods later
 	if !util.PodScheduled(pod) {
+		return nil
+	}
+
+	if !oc.isPodRelevant(pod) {
+		// Track remote ovn networked pods too, for network policy, and egress gw.
+		if annotation, err := util.UnmarshalPodAnnotation(pod.Annotations); err != nil {
+			return fmt.Errorf("failed to get non-local pod %s/%s annotations to add to namespace, will retry: %v",
+				pod.Namespace, pod.Name, err)
+		} else {
+			if addPort && util.PodWantsNetwork(pod) {
+				if err = oc.addRemotePodToNamespace(pod.Namespace, annotation.IPs); err != nil {
+					return fmt.Errorf("failed to add non-local pod %s/%s to namespace: %v", pod.Namespace, pod.Name, err)
+				}
+			}
+
+			//FIXME: Update comments & reduce code duplication.
+			// check if this pod is serving as an external GW
+			if oldPod != nil && (exGatewayAnnotationsChanged(oldPod, pod) || networkStatusAnnotationsChanged(oldPod, pod)) {
+				// No matter if a pod is ovn networked, or host networked, we still need to check for exgw
+				// annotations. If the pod is ovn networked and is in update reschedule, addLogicalPort will take
+				// care of updating the exgw updates
+				if err = oc.deletePodExternalGW(oldPod); err != nil {
+					return fmt.Errorf("deletePodExternalGW failed %s/%s: %v", pod.Namespace, pod.Name, err)
+				}
+			}
+
+			// either pod is host-networked or its an update for a normal pod (addPort=false case)
+			if oldPod == nil || exGatewayAnnotationsChanged(oldPod, pod) || networkStatusAnnotationsChanged(oldPod, pod) {
+				if err := oc.addPodExternalGW(pod); err != nil {
+					return fmt.Errorf("addPodExternalGW failed %s/%s: %v", pod.Namespace, pod.Name, err)
+				}
+			}
+		}
 		return nil
 	}
 
@@ -830,5 +907,54 @@ func (oc *Controller) StartServiceController(wg *sync.WaitGroup, runRepair bool)
 			klog.Errorf("Error running OVN Kubernetes Services controller: %v", err)
 		}
 	}()
+	return nil
+}
+
+func (oc *Controller) StartInterconnectController(wg *sync.WaitGroup) error {
+	klog.Infof("Starting OVN IC Controller")
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// use 5 workers like most of the kubernetes controllers in the
+		// kubernetes controller-manager
+		err := oc.icController.Run(oc.stopChan)
+		if err != nil {
+			klog.Errorf("Error running OVN InterConnect controller: %v", err)
+		}
+	}()
+	return nil
+}
+
+func (oc *Controller) probeOvnFeatures() error {
+	if oc.multicastSupport {
+		if _, _, err := util.RunOVNSbctl("--columns=_uuid", "list", "IGMP_Group"); err != nil {
+			klog.Warningf("Multicast support enabled, however version of OVN in use does not support IGMP Group. " +
+				"Disabling Multicast Support")
+			oc.multicastSupport = false
+		}
+	}
+
+	err := oc.createACLLoggingMeter()
+	if err != nil {
+		klog.Warningf("ACL logging support enabled, however acl-logging meter could not be created: %v. "+
+			"Disabling ACL logging support", err)
+		oc.aclLoggingEnabled = false
+	}
+
+	// FIXME: When https://github.com/ovn-org/libovsdb/issues/235 is fixed,
+	// use IsTableSupported(nbdb.LoadBalancerGroup).
+	if _, _, err := util.RunOVNNbctl("--columns=_uuid", "list", "Load_Balancer_Group"); err != nil {
+		klog.Warningf("Load Balancer Group support enabled, however version of OVN in use does not support Load Balancer Groups.")
+	} else {
+		loadBalancerGroup := nbdb.LoadBalancerGroup{
+			Name: ovntypes.ClusterLBGroupName,
+		}
+		err := libovsdbops.CreateOrUpdateLoadBalancerGroup(oc.nbClient, &loadBalancerGroup)
+		if err != nil {
+			klog.Errorf("Error creating cluster-wide load balancer group %s: %v", ovntypes.ClusterLBGroupName, err)
+			return err
+		}
+		oc.loadBalancerGroupUUID = loadBalancerGroup.UUID
+	}
 	return nil
 }

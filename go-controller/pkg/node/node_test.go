@@ -213,6 +213,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=true",
 						nodeIP, interval, ofintval, nodeName),
@@ -274,6 +275,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=true",
 						nodeIP, interval, ofintval, nodeName),
@@ -348,6 +350,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=false "+
 						"external_ids:ovn-limit-lflow-cache=1000 "+
@@ -414,6 +417,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=true",
 						nodeIP, interval, ofintval, nodeName),
@@ -486,6 +490,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=true",
 						nodeIP, interval, ofintval, nodeName),
@@ -558,6 +563,7 @@ var _ = Describe("Node", func() {
 						"external_ids:ovn-openflow-probe-interval=%d "+
 						"external_ids:hostname=\"%s\" "+
 						"external_ids:ovn-monitor-all=true "+
+						"external_ids:ovn-is-interconn=true "+
 						"external_ids:ovn-ofctrl-wait-before-clear=0 "+
 						"external_ids:ovn-enable-lflow-cache=true",
 						nodeIP, interval, ofintval, nodeName),

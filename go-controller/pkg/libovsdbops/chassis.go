@@ -2,6 +2,8 @@ package libovsdbops
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -62,6 +64,46 @@ func DeleteChassis(sbClient libovsdbclient.Client, chassis ...*sbdb.Chassis) err
 	return err
 }
 
+// GetChassis looks up a chassis from the cache
+func GetChassis(sbClient libovsdbclient.Client, chassis *sbdb.Chassis) (*sbdb.Chassis, error) {
+	found := []*sbdb.Chassis{}
+	opModel := operationModel{
+		Model:          chassis,
+		ModelPredicate: func(item *sbdb.Chassis) bool { return item.Name == chassis.Name },
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(sbClient)
+	err := m.Lookup(opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
+// GetEncap looks up an encap from the cache
+func GetEncap(sbClient libovsdbclient.Client, encap *sbdb.Encap) (*sbdb.Encap, error) {
+	found := []*sbdb.Encap{}
+	opModel := operationModel{
+		Model:          encap,
+		ModelPredicate: func(item *sbdb.Encap) bool { return item.Type == encap.Type && item.IP == encap.IP },
+		ExistingResult: &found,
+		ErrNotFound:    true,
+		BulkOp:         false,
+	}
+
+	m := newModelClient(sbClient)
+	err := m.Lookup(opModel)
+	if err != nil {
+		return nil, err
+	}
+
+	return found[0], nil
+}
+
 type chassisPredicate func(*sbdb.Chassis) bool
 
 // DeleteChassisWithPredicate looks up chassis from the cache based on a given
@@ -92,4 +134,113 @@ func DeleteChassisWithPredicate(sbClient libovsdbclient.Client, p chassisPredica
 	m := newModelClient(sbClient)
 	err := m.Delete(opModels...)
 	return err
+}
+
+func DeleteNodeChassis(sbClient libovsdbclient.Client, nodeNames ...string) error {
+	var opModels []operationModel
+
+	for _, nodeName := range nodeNames {
+		opModels = append(opModels, operationModel{
+			Model: &sbdb.Chassis{},
+			// we must use a predicate here since chassis are not indexed by hostname
+			ModelPredicate: func(chass *sbdb.Chassis) bool { return chass.Hostname == nodeName },
+		})
+	}
+
+	m := newModelClient(sbClient)
+	if err := m.Delete(opModels...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func CreateOrUpdateRemoteChassis(sbClient libovsdbclient.Client, hostname, name, ip string) error {
+	chassis := &sbdb.Chassis{
+		Hostname: hostname,
+		Name:     name,
+	}
+
+	chassis, err := GetChassis(sbClient, chassis)
+	if err == nil {
+		if strings.ToLower(chassis.OtherConfig["is-remote"]) == "true" {
+			// chassis already exists with is-remote set. Nothing to do.
+			return nil
+		}
+	} else {
+		chassis = &sbdb.Chassis{
+			Hostname: hostname,
+			Name:     name,
+		}
+	}
+
+	options := map[string]string{
+		"is-remote": "true",
+	}
+	chassis.ExternalIDs = options
+	chassis.OtherConfig = options
+
+	encap := &sbdb.Encap{
+		Type:        "geneve",
+		ChassisName: name,
+		IP:          ip,
+		Options:     map[string]string{"csum": "true"},
+	}
+	m := newModelClient(sbClient)
+	opModels := []operationModel{
+		{
+			Model:          encap,
+			ModelPredicate: func(item *sbdb.Encap) bool { return item.Type == encap.Type && item.IP == encap.IP },
+			OnModelUpdates: []interface{}{
+				&encap.Options,
+			},
+			DoAfter: func() {
+				chassis.Encaps = []string{encap.UUID}
+			},
+		},
+		{
+			Model:          chassis,
+			ModelPredicate: func(ch *sbdb.Chassis) bool { return ch.Name == name },
+			OnModelUpdates: []interface{}{
+				&chassis.ExternalIDs,
+				&chassis.OtherConfig,
+			},
+			OnModelMutations: []interface{}{
+				&chassis.Encaps,
+			},
+		},
+	}
+
+	if _, err := m.CreateOrUpdate(opModels...); err != nil {
+		return err
+	}
+	return nil
+}
+
+func UpdateChassisToLocal(sbClient libovsdbclient.Client, hostname, name string) error {
+	chassis := &sbdb.Chassis{
+		Hostname: hostname,
+		Name:     name,
+	}
+
+	chassis, err := GetChassis(sbClient, chassis)
+	if err != nil {
+		return fmt.Errorf("failed to get chassis id %s(%s), error: %v", name, hostname, err)
+	}
+
+	chassis.ExternalIDs["is-remote"] = "false"
+	chassis.OtherConfig["is-remote"] = "false"
+
+	opModel := operationModel{
+		Model: chassis,
+		OnModelUpdates: []interface{}{
+			&chassis.ExternalIDs,
+			&chassis.OtherConfig,
+		},
+		ErrNotFound: true,
+	}
+
+	m := newModelClient(sbClient)
+	_, err = m.CreateOrUpdate(opModel)
+	return err
+
 }

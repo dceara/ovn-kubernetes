@@ -199,6 +199,7 @@ func runOvnKube(ctx *cli.Context) error {
 
 	master := ctx.String("init-master")
 	node := ctx.String("init-node")
+	local := ctx.String("init-local")
 
 	cleanupNode := ctx.String("cleanup-node")
 	if cleanupNode != "" {
@@ -212,8 +213,12 @@ func runOvnKube(ctx *cli.Context) error {
 		return nil
 	}
 
-	if master == "" && node == "" {
-		return fmt.Errorf("need to run ovnkube in either master and/or node mode")
+	if master == "" && node == "" && local == "" {
+		return fmt.Errorf("need to run ovnkube in either master/node and/or local mode")
+	}
+
+	if master != "" && local != "" {
+		return fmt.Errorf("need to run ovnkube in either master or local mode")
 	}
 
 	stopChan := make(chan struct{})
@@ -221,7 +226,7 @@ func runOvnKube(ctx *cli.Context) error {
 
 	var watchFactory factory.Shutdownable
 	var masterWatchFactory *factory.WatchFactory
-	if master != "" {
+	if master != "" || local != "" {
 		var err error
 		// create factory and start the controllers asked for
 		masterWatchFactory, err = factory.NewMasterWatchFactory(ovnClientset)
@@ -242,10 +247,20 @@ func runOvnKube(ctx *cli.Context) error {
 		// register prometheus metrics that do not depend on becoming ovnkube-master leader
 		metrics.RegisterMasterBase()
 
-		ovnController := ovn.NewOvnController(ovnClientset, masterWatchFactory, stopChan, nil,
-			libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient))
-		if err := ovnController.Start(master, wg, ctx.Context); err != nil {
-			return err
+		if master != "" {
+			ovnController := ovn.NewOvnController(ovnClientset, masterWatchFactory, stopChan, nil,
+				libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient), false, master)
+			if err := ovnController.Start(master, wg, ctx.Context); err != nil {
+				return err
+			}
+		}
+
+		if local != "" {
+			localController := ovn.NewLocalOvnController(ovnClientset, masterWatchFactory, stopChan, nil,
+				libovsdbOvnNBClient, libovsdbOvnSBClient, util.EventRecorder(ovnClientset.KubeClient), local)
+			if err := localController.Start(wg); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -268,7 +283,13 @@ func runOvnKube(ctx *cli.Context) error {
 		// register ovnkube node specific prometheus metrics exported by the node
 		metrics.RegisterNodeMetrics()
 		start := time.Now()
-		n := ovnnode.NewNode(ovnClientset.KubeClient, nodeWatchFactory, node, stopChan, util.EventRecorder(ovnClientset.KubeClient))
+		var azName string
+		if config.OvnSouth.Scheme == config.OvnDBSchemeUnix {
+			azName = node
+		} else {
+			azName = types.GlobalAz
+		}
+		n := ovnnode.NewNode(ovnClientset.KubeClient, nodeWatchFactory, node, stopChan, util.EventRecorder(ovnClientset.KubeClient), azName)
 		if err := n.Start(ctx.Context, wg); err != nil {
 			return err
 		}

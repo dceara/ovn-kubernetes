@@ -225,6 +225,8 @@ parse_args() {
             --delete )                          delete
                                                 exit
                                                 ;;
+            -laz | --local-az-enabled )         OVN_LOCAL_AZ_SUPPORT=true
+                                                ;;
             -h | --help )                       usage
                                                 exit
                                                 ;;
@@ -277,6 +279,7 @@ print_params() {
      echo "OVN_HOST_NETWORK_NAMESPACE = $OVN_HOST_NETWORK_NAMESPACE"
      echo "OVN_ENABLE_EX_GW_NETWORK_BRIDGE = $OVN_ENABLE_EX_GW_NETWORK_BRIDGE"
      echo "OVN_EX_GW_NETWORK_INTERFACE = $OVN_EX_GW_NETWORK_INTERFACE"
+     echo "OVN_LOCAL_AZ_SUPPORT = $OVN_LOCAL_AZ_SUPPORT"
      echo ""
 }
 
@@ -374,10 +377,15 @@ set_default_params() {
   SVC_CIDR_IPV6=${SVC_CIDR_IPV6:-fd00:10:96::/112}
   JOIN_SUBNET_IPV4=${JOIN_SUBNET_IPV4:-100.64.0.0/16}
   JOIN_SUBNET_IPV6=${JOIN_SUBNET_IPV6:-fd98::/64}
+  OVN_LOCAL_AZ_SUPPORT=${OVN_LOCAL_AZ_SUPPORT:-false}
   KIND_NUM_MASTER=1
   if [ "$OVN_HA" == true ]; then
     KIND_NUM_MASTER=3
-    KIND_NUM_WORKER=${KIND_NUM_WORKER:-0}
+    if [ "$OVN_LOCAL_AZ_SUPPORT" == true ]; then
+      KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
+    else
+      KIND_NUM_WORKER=${KIND_NUM_WORKER:-0}
+    fi
   else
     KIND_NUM_WORKER=${KIND_NUM_WORKER:-2}
   fi
@@ -626,9 +634,20 @@ install_ovn() {
   else
     run_kubectl apply -f ovnkube-db.yaml
   fi
+
+  if [ "$OVN_LOCAL_AZ_SUPPORT" == true ]; then
+    NODES=$(kind get nodes --name "${KIND_CLUSTER_NAME}" | sort)
+    for n in $NODES; do
+      if  ! kubectl get node $n --show-labels | grep ovnkube-db; then
+         kubectl label --overwrite node $n k8s.ovn.org/ovnkube-az=local
+      fi
+    done
+  fi
+
   run_kubectl apply -f ovs-node.yaml
   run_kubectl apply -f ovnkube-master.yaml
   run_kubectl apply -f ovnkube-node.yaml
+  run_kubectl apply -f ovnkube-local.yaml
   popd
 }
 

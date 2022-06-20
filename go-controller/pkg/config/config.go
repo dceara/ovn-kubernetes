@@ -606,6 +606,10 @@ var CommonFlags = []cli.Flag{
 		Usage: "initialize node, requires the name that node is registered with in kubernetes cluster",
 	},
 	&cli.StringFlag{
+		Name:  "init-local",
+		Usage: "initialize local, requires the name that node is registered with in kubernetes cluster",
+	},
+	&cli.StringFlag{
 		Name:  "cleanup-node",
 		Usage: "cleanup node, requires the name that node is registered with in kubernetes cluster",
 	},
@@ -1540,6 +1544,35 @@ func completeGatewayConfig(allSubnets *configSubnets) error {
 	return nil
 }
 
+// FIXME: What we should actually do is implement a join subnet allocator
+// and store a distinct joinSubnet as annotation for each node running in
+// local mode.  Until then just hack around this by reserving
+// joinSubnet + offset.
+func GetJoinSubnets(offset int) ([]*net.IPNet, error) {
+	var joinSubnets []*net.IPNet
+	joinSubnetsConfig := []string{}
+	if IPv4Mode {
+		joinSubnetsConfig = append(joinSubnetsConfig, Gateway.V4JoinSubnet)
+	}
+	if IPv6Mode {
+		joinSubnetsConfig = append(joinSubnetsConfig, Gateway.V6JoinSubnet)
+	}
+	for _, joinSubnetString := range joinSubnetsConfig {
+		_, joinSubnet, err := net.ParseCIDR(joinSubnetString)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing join subnet string %s: %v", joinSubnetString, err)
+		}
+		jsb := utilnet.BigForIP(joinSubnet.IP)
+		js := utilnet.AddIPOffset(jsb, offset*256*256)
+		joinSubnet = &net.IPNet{
+			IP:   js,
+			Mask: joinSubnet.Mask,
+		}
+		joinSubnets = append(joinSubnets, joinSubnet)
+	}
+	return joinSubnets, nil
+}
+
 func buildOVNKubernetesFeatureConfig(ctx *cli.Context, cli, file *config) error {
 	// Copy config file values over default values
 	if err := overrideFields(&OVNKubernetesFeature, &file.OVNKubernetesFeature, &savedOVNKubernetesFeature); err != nil {
@@ -2028,6 +2061,11 @@ func buildOvnAuth(exec kexec.Interface, northbound bool, cliAuth, confAuth *OvnA
 			return nil, fmt.Errorf("certificate or key given; perhaps you mean to use the 'ssl' scheme?")
 		}
 		auth.Scheme = OvnDBSchemeUnix
+		if northbound {
+			auth.Address = "unix:/var/run/ovn/ovnnb_db.sock"
+		} else {
+			auth.Address = "unix:/var/run/ovn/ovnsb_db.sock"
+		}
 		return auth, nil
 	}
 
@@ -2089,7 +2127,12 @@ func (a *OvnAuthConfig) GetURL() string {
 // for the OVN northbound or southbound database server or client
 func (a *OvnAuthConfig) SetDBAuth() error {
 	if a.Scheme == OvnDBSchemeUnix {
-		// Nothing to do
+		if !a.northbound {
+			// store the Southbound Database address in an external id - "external_ids:ovn-remote"
+			if err := setOVSExternalID(a.exec, "ovn-remote", "unix:/var/run/ovn/ovnsb_db.sock"); err != nil {
+				return err
+			}
+		}
 		return nil
 	} else if a.Scheme == OvnDBSchemeSSL {
 		// Both server and client SSL schemes require privkey and cert

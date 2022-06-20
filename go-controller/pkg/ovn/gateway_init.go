@@ -237,10 +237,22 @@ func (oc *Controller) gatewayInit(nodeName string, clusterIPSubnet []*net.IPNet,
 				types.OVNClusterRouter, err)
 		}
 
+		// When running in local mode (interconnect-mode) jsut add a plain
+		// default route.  Otherwise add a policy=src-ip route to move all
+		// the traffic originated on the local node via the GW router.
 		lrsr := nbdb.LogicalRouterStaticRoute{
-			Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
-			IPPrefix: hostSubnet.String(),
-			Nexthop:  gwLRPIP[0].String(),
+			Nexthop: gwLRPIP[0].String(),
+		}
+		if oc.local {
+			lrsr.Policy = &nbdb.LogicalRouterStaticRoutePolicyDstIP
+			if utilnet.IsIPv6CIDR(hostSubnet) {
+				lrsr.IPPrefix = "::/0"
+			} else {
+				lrsr.IPPrefix = "0.0.0.0/0"
+			}
+		} else {
+			lrsr.Policy = &nbdb.LogicalRouterStaticRoutePolicySrcIP
+			lrsr.IPPrefix = hostSubnet.String()
 		}
 		p := func(item *nbdb.LogicalRouterStaticRoute) bool {
 			return item.Nexthop == lrsr.Nexthop && item.IPPrefix == lrsr.IPPrefix && item.Policy != nil && *item.Policy == *lrsr.Policy

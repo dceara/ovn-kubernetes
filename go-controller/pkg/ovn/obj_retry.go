@@ -819,7 +819,9 @@ func (oc *Controller) updateResource(objectsToRetry *retryObjs, oldObj, newObj i
 			return fmt.Errorf("could not cast oldObj of type %T to *kapi.Node", oldObj)
 		}
 		// determine what actually changed in this update
+		nodeAddedtoGlobalAZ := util.IsNodeGlobalAz(newNode) && !util.IsNodeGlobalAz(oldNode)
 		_, nodeSync := oc.addNodeFailed.Load(newNode.Name)
+		nodeSync = nodeSync || nodeAddedtoGlobalAZ
 		_, failed := oc.nodeClusterRouterPortFailed.Load(newNode.Name)
 		clusterRtrSync := failed || nodeChassisChanged(oldNode, newNode) || nodeSubnetChanged(oldNode, newNode)
 		_, failed = oc.mgmtPortFailed.Load(newNode.Name)
@@ -943,8 +945,22 @@ func (oc *Controller) deleteResource(objectsToRetry *retryObjs, obj, cachedObj i
 		if cachedObj != nil {
 			portInfo = cachedObj.(*lpInfo)
 		}
-		oc.logicalPortCache.remove(util.GetLogicalPortName(pod.Namespace, pod.Name))
-		return oc.removePod(pod, portInfo)
+		if oc.isPodRelevant(pod) {
+			oc.logicalPortCache.remove(util.GetLogicalPortName(pod.Namespace, pod.Name))
+			return oc.removePod(pod, portInfo)
+		} else if util.PodWantsNetwork(pod) {
+			// Untrack remote pods too, for network policy.
+			if annotation, err := util.UnmarshalPodAnnotation(pod.Annotations); err != nil {
+				klog.Infof("Failed to get non-local pod %s annotations to delete from namespace: %v",
+					pod.Name, err)
+			} else {
+				if err = oc.deleteRemotePodFromNamespace(pod.Namespace, annotation.IPs); err != nil {
+					klog.Infof("Failed to delete non-local pod %s from namespace: %v", pod.Name, err)
+				}
+			}
+			return nil
+		}
+		return nil
 
 	case factory.PolicyType:
 		var cachedNP *networkPolicy

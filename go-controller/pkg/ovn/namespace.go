@@ -9,6 +9,7 @@ import (
 
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
+	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdbops"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
@@ -114,6 +115,33 @@ func (oc *Controller) addPodToNamespace(ns string, ips []*net.IPNet) (*gatewayIn
 	}
 
 	return oc.getRoutingExternalGWs(nsInfo), oc.getRoutingPodGWs(nsInfo), ops, nil
+}
+
+func (oc *Controller) addRemotePodToNamespace(ns string, ips []*net.IPNet) error {
+	_, _, ops, err := oc.addPodToNamespace(ns, ips)
+
+	if err == nil {
+		_, err = libovsdbops.TransactAndCheck(oc.nbClient, ops)
+		if err != nil {
+			return fmt.Errorf("could not add pod IPs to the namespace address set - %+v", err)
+		}
+	}
+	return err
+}
+
+func (oc *Controller) deleteRemotePodFromNamespace(ns string, ips []*net.IPNet) error {
+	nsInfo, nsUnlock := oc.getNamespaceLocked(ns, true)
+	if nsInfo == nil {
+		return nil
+	}
+	defer nsUnlock()
+
+	if nsInfo.addressSet != nil {
+		if err := nsInfo.addressSet.DeleteIPs(createIPAddressSlice(ips)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (oc *Controller) deletePodFromNamespace(ns string, podIfAddrs []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
@@ -287,6 +315,9 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 					klog.Errorf("Failed to get all the pods (%v)", err)
 				}
 				for _, pod := range existingPods {
+					if !oc.isPodRelevant(pod) {
+						continue
+					}
 					logicalPort := util.GetLogicalPortName(pod.Namespace, pod.Name)
 					if !util.PodWantsNetwork(pod) {
 						continue
@@ -331,6 +362,9 @@ func (oc *Controller) updateNamespace(old, newer *kapi.Namespace) {
 				klog.Errorf("Failed to get all the pods (%v)", err)
 			}
 			for _, pod := range existingPods {
+				if !oc.isPodRelevant(pod) {
+					continue
+				}
 				podAnnotation, err := util.UnmarshalPodAnnotation(pod.Annotations)
 				if err != nil {
 					klog.Error(err.Error())
@@ -602,7 +636,7 @@ func (oc *Controller) createNamespaceAddrSetAllPods(ns string) (addressset.Addre
 	} else {
 		ips = make([]net.IP, 0, len(existingPods))
 		for _, pod := range existingPods {
-			if util.PodWantsNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) {
+			if pod.Status.PodIP != "" && util.PodWantsNetwork(pod) && !util.PodCompleted(pod) && util.PodScheduled(pod) && oc.isPodRelevant(pod) {
 				podIPs, err := util.GetAllPodIPs(pod)
 				if err != nil {
 					klog.Warningf(err.Error())

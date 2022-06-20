@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/fields"
+
 	kapi "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -273,38 +275,12 @@ func (oc *Controller) StartClusterMaster() error {
 	// update metrics for host subnets
 	metrics.RecordSubnetCount(v4HostSubnetCount, v6HostSubnetCount)
 
-	if oc.multicastSupport {
-		if _, _, err := util.RunOVNSbctl("--columns=_uuid", "list", "IGMP_Group"); err != nil {
-			klog.Warningf("Multicast support enabled, however version of OVN in use does not support IGMP Group. " +
-				"Disabling Multicast Support")
-			oc.multicastSupport = false
-		}
-	}
-
-	err = oc.createACLLoggingMeter()
+	err = oc.probeOvnFeatures()
 	if err != nil {
-		klog.Warningf("ACL logging support enabled, however acl-logging meter could not be created: %v. "+
-			"Disabling ACL logging support", err)
-		oc.aclLoggingEnabled = false
+		return err
 	}
 
-	// FIXME: When https://github.com/ovn-org/libovsdb/issues/235 is fixed,
-	// use IsTableSupported(nbdb.LoadBalancerGroup).
-	if _, _, err := util.RunOVNNbctl("--columns=_uuid", "list", "Load_Balancer_Group"); err != nil {
-		klog.Warningf("Load Balancer Group support enabled, however version of OVN in use does not support Load Balancer Groups.")
-	} else {
-		loadBalancerGroup := nbdb.LoadBalancerGroup{
-			Name: types.ClusterLBGroupName,
-		}
-		err := libovsdbops.CreateOrUpdateLoadBalancerGroup(oc.nbClient, &loadBalancerGroup)
-		if err != nil {
-			klog.Errorf("Error creating cluster-wide load balancer group %s: %v", types.ClusterLBGroupName, err)
-			return err
-		}
-		oc.loadBalancerGroupUUID = loadBalancerGroup.UUID
-	}
-
-	if err := oc.SetupMaster(nodeNames); err != nil {
+	if err := oc.SetupMaster(nodeNames, types.GlobalAzID); err != nil {
 		klog.Errorf("Failed to setup master (%v)", err)
 		return err
 	}
@@ -328,7 +304,7 @@ func (oc *Controller) StartClusterMaster() error {
 }
 
 // SetupMaster creates the central router and load-balancers for the network
-func (oc *Controller) SetupMaster(existingNodeNames []string) error {
+func (oc *Controller) SetupMaster(existingNodeNames []string, joinOffset int) error {
 	// Create a single common distributed router for the cluster.
 	logicalRouter := nbdb.LogicalRouter{
 		Name: types.OVNClusterRouter,
@@ -410,7 +386,7 @@ func (oc *Controller) SetupMaster(existingNodeNames []string) error {
 
 	// Initialize the OVNJoinSwitch switch IP manager
 	// The OVNJoinSwitch will be allocated IP addresses in the range 100.64.0.0/16 or fd98::/64.
-	oc.joinSwIPManager, err = lsm.NewJoinLogicalSwitchIPManager(oc.nbClient, logicalSwitch.UUID, existingNodeNames)
+	oc.joinSwIPManager, err = lsm.NewJoinLogicalSwitchIPManager(oc.nbClient, logicalSwitch.UUID, existingNodeNames, joinOffset)
 	if err != nil {
 		return err
 	}
@@ -464,7 +440,14 @@ func (oc *Controller) SetupMaster(existingNodeNames []string) error {
 		return fmt.Errorf("unable to create gateway router control plane protection: %w", err)
 	}
 
-	return nil
+	return libovsdbops.UpdateNBAvailbilityZoneName(oc.nbClient, oc.getAvailaibityZoneName())
+}
+
+func (oc *Controller) getAvailaibityZoneName() string {
+	if oc.local {
+		return oc.nodeName
+	}
+	return types.GlobalAz
 }
 
 func (oc *Controller) syncNodeManagementPort(node *kapi.Node, hostSubnets []*net.IPNet) error {
@@ -495,10 +478,22 @@ func (oc *Controller) syncNodeManagementPort(node *kapi.Node, hostSubnets []*net
 		}
 
 		if config.Gateway.Mode == config.GatewayModeLocal {
+			// When running in local mode (interconnect-mode) jsut add a plain
+			// default route.  Otherwise add a policy=src-ip route to move all
+			// the traffic originated on the local node via the mgmt port.
 			lrsr := nbdb.LogicalRouterStaticRoute{
-				Policy:   &nbdb.LogicalRouterStaticRoutePolicySrcIP,
-				IPPrefix: hostSubnet.String(),
-				Nexthop:  mgmtIfAddr.IP.String(),
+				Nexthop: mgmtIfAddr.IP.String(),
+			}
+			if oc.local {
+				lrsr.Policy = &nbdb.LogicalRouterStaticRoutePolicyDstIP
+				if utilnet.IsIPv6CIDR(hostSubnet) {
+					lrsr.IPPrefix = "::/0"
+				} else {
+					lrsr.IPPrefix = "0.0.0.0/0"
+				}
+			} else {
+				lrsr.Policy = &nbdb.LogicalRouterStaticRoutePolicySrcIP
+				lrsr.IPPrefix = hostSubnet.String()
 			}
 			p := func(item *nbdb.LogicalRouterStaticRoute) bool {
 				return item.IPPrefix == lrsr.IPPrefix && item.Nexthop == lrsr.Nexthop && item.Policy != nil && *item.Policy == *lrsr.Policy
@@ -571,6 +566,9 @@ func (oc *Controller) syncGatewayLogicalNetwork(node *kapi.Node, l3GatewayConfig
 		}
 	}
 
+	// Store node's GR IPs as annotations to be used by the interconnect
+	// controller.
+	err = oc.addNodeGRIPsAnnotations(node, gwLRPIPs)
 	return err
 }
 
@@ -781,6 +779,29 @@ func (oc *Controller) ensureNodeLogicalNetwork(node *kapi.Node, hostSubnets []*n
 	return oc.lsManager.AddNode(nodeName, logicalSwitch.UUID, hostSubnets)
 }
 
+// FIXME Copied from addNodeAnnotations (with the same issues).
+func (oc *Controller) addNodeGRIPsAnnotations(node *kapi.Node, grIPs []*net.IPNet) error {
+	nodeAnnotations, err := util.CreateNodeGRIPsAnnotation(grIPs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal node %q annotation for GR IPs %s",
+			node.Name, util.JoinIPNets(grIPs, ","))
+	}
+	err = utilwait.PollImmediate(OvnNodeAnnotationRetryInterval, OvnNodeAnnotationRetryTimeout, func() (bool, error) {
+		err = oc.kube.SetAnnotationsOnNode(node.Name, nodeAnnotations)
+		if err != nil {
+			klog.Warningf("Failed to set node annotation, will retry for: %v",
+				OvnNodeAnnotationRetryTimeout)
+		}
+		return err == nil, nil
+	},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to set GR IPs annotation on node %s: %v",
+			node.Name, err)
+	}
+	return nil
+}
+
 func (oc *Controller) addNodeAnnotations(node *kapi.Node, hostSubnets []*net.IPNet) error {
 	gwLRPIPs, err := oc.joinSwIPManager.EnsureJoinLRPIPs(node.Name)
 	if err != nil {
@@ -971,9 +992,11 @@ func (oc *Controller) addNode(node *kapi.Node) ([]*net.IPNet, error) {
 	// subsequent operation in addNode() fails, oc.lsManager.DeleteNode(node.Name)
 	// needs to be done, otherwise, this node's IPAM will be overwritten and the
 	// same IP could be allocated to multiple Pods scheduled on this node.
-	err = oc.ensureNodeLogicalNetwork(node, hostSubnets)
-	if err != nil {
-		return nil, err
+	if util.IsNodeGlobalAz(node) {
+		err = oc.ensureNodeLogicalNetwork(node, hostSubnets)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// If node annotation succeeds and subnets were allocated, update the used subnet count
@@ -1005,6 +1028,7 @@ func (oc *Controller) checkNodeChassisMismatch(node *kapi.Node) (bool, error) {
 			return false, nil
 		}
 	}
+
 	return true, nil
 }
 
@@ -1065,16 +1089,7 @@ func (oc *Controller) deleteNodeLogicalNetwork(nodeName string) error {
 	return nil
 }
 
-func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) error {
-	for _, hostSubnet := range hostSubnets {
-		if err := oc.deleteNodeHostSubnet(nodeName, hostSubnet); err != nil {
-			return fmt.Errorf("error deleting node %s HostSubnet %v: %v", nodeName, hostSubnet, err)
-		}
-		util.UpdateUsedHostSubnetsCount(hostSubnet, &oc.v4HostSubnetsUsed, &oc.v6HostSubnetsUsed, false)
-	}
-	// update metrics
-	metrics.RecordSubnetUsage(oc.v4HostSubnetsUsed, oc.v6HostSubnetsUsed)
-
+func (oc *Controller) deleteNodeOvnResources(nodeName string) error {
 	if err := oc.deleteNodeLogicalNetwork(nodeName); err != nil {
 		return fmt.Errorf("error deleting node %s logical network: %v", nodeName, err)
 	}
@@ -1085,6 +1100,23 @@ func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) erro
 
 	if err := oc.joinSwIPManager.ReleaseJoinLRPIPs(nodeName); err != nil {
 		return fmt.Errorf("failed to clean up GR LRP IPs for node %s: %v", nodeName, err)
+	}
+	return nil
+}
+
+func (oc *Controller) deleteNode(nodeName string, hostSubnets []*net.IPNet) error {
+	// Clean up as much as we can but don't hard error
+	for _, hostSubnet := range hostSubnets {
+		if err := oc.deleteNodeHostSubnet(nodeName, hostSubnet); err != nil {
+			return fmt.Errorf("error deleting node %s HostSubnet %v: %v", nodeName, hostSubnet, err)
+		}
+		util.UpdateUsedHostSubnetsCount(hostSubnet, &oc.v4HostSubnetsUsed, &oc.v6HostSubnetsUsed, false)
+	}
+	// update metrics
+	metrics.RecordSubnetUsage(oc.v4HostSubnetsUsed, oc.v6HostSubnetsUsed)
+
+	if err := oc.deleteNodeOvnResources(nodeName); err != nil {
+		return err
 	}
 
 	p := func(item *sbdb.Chassis) bool {
@@ -1193,6 +1225,7 @@ func (oc *Controller) syncNodesPeriodic() {
 // do not want to delete.
 func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 	foundNodes := sets.NewString()
+
 	for _, tmp := range nodes {
 		node, ok := tmp.(*kapi.Node)
 		if !ok {
@@ -1306,6 +1339,75 @@ func (oc *Controller) syncNodesRetriable(nodes []interface{}) error {
 	return nil
 }
 
+func (oc *Controller) storeNodeId(nodeName string, nodeId int) {
+	klog.Infof("syncNodeAz : Setting Id [%d] for node %q in annotations and cache", nodeId, nodeName)
+	_ = oc.kube.SetAnnotationsOnNode(nodeName, map[string]interface{}{util.OvnNodeId: strconv.Itoa(nodeId)})
+	oc.azIdCache[nodeName] = nodeId
+}
+
+func (oc *Controller) removeNodeId(nodeName string, nodeId int) {
+	klog.Infof("syncNodeAz deleting node %q ID %d", nodeName, nodeId)
+	if nodeId != -1 {
+		oc.azIdBitmap.Release(nodeId)
+	}
+	delete(oc.azIdCache, nodeName)
+}
+
+func (oc *Controller) syncNodeId(node *kapi.Node, deleted bool) error {
+	if oc.local {
+		return nil
+	}
+
+	klog.Infof("syncNodeAzId entered for node %q", node.Name)
+
+	oc.azIdCacheLock.Lock()
+	defer func() {
+		oc.azIdCacheLock.Unlock()
+		klog.Infof("syncNodeAzId done for node %q", node.Name)
+	}()
+
+	klog.Infof("syncNodeAzId got lock for node %q", node.Name)
+
+	nodeId := util.GetNodeId(node)
+	if deleted {
+		if nodeId != -1 {
+			oc.removeNodeId(node.Name, nodeId)
+		}
+		return nil
+	}
+
+	nodeIdInCache, ok := oc.azIdCache[node.Name]
+	if ok {
+		klog.Infof("syncNodeAzId found node %q in cache with ID %d", node.Name, nodeIdInCache)
+	} else {
+		nodeIdInCache = -1
+	}
+
+	if nodeIdInCache != -1 && nodeId != nodeIdInCache {
+		oc.storeNodeId(node.Name, nodeIdInCache)
+		return nil
+	}
+
+	if nodeIdInCache == -1 && nodeId != -1 {
+		oc.azIdCache[node.Name] = nodeId
+		return nil
+	}
+
+	// We need to allocate the node id.
+	if nodeIdInCache == -1 && nodeId == -1 {
+		nodeId, allocated, _ := oc.azIdBitmap.AllocateNext()
+		klog.Infof("syncNodeAz Id allocated for node %q is %d", node.Name, nodeId)
+		if allocated {
+			oc.storeNodeId(node.Name, nodeId)
+		} else {
+			klog.Infof("syncNodeAz failed to allocate ID for node %q", node.Name)
+			oc.removeNodeId(node.Name, -1)
+		}
+	}
+
+	return nil
+}
+
 // nodeSyncs structure contains flags for the different failures
 // so the retry logic can control what need to retry based
 type nodeSyncs struct {
@@ -1341,7 +1443,7 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 		oc.addNodeFailed.Delete(node.Name)
 	}
 
-	if nSyncs.syncClusterRouterPort {
+	if nSyncs.syncClusterRouterPort && util.IsNodeGlobalAz(node) {
 		if err = oc.syncNodeClusterRouterPort(node, nil); err != nil {
 			errs = append(errs, err)
 			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
@@ -1350,7 +1452,7 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 		}
 	}
 
-	if nSyncs.syncMgmtPort {
+	if nSyncs.syncMgmtPort && util.IsNodeGlobalAz(node) {
 		err := oc.syncNodeManagementPort(node, hostSubnets)
 		if err != nil {
 			errs = append(errs, err)
@@ -1367,7 +1469,7 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 
 	oc.clearInitialNodeNetworkUnavailableCondition(node)
 
-	if nSyncs.syncGw {
+	if nSyncs.syncGw && util.IsNodeGlobalAz(node) {
 		err := oc.syncNodeGateway(node, nil)
 		if err != nil {
 			errs = append(errs, err)
@@ -1377,22 +1479,26 @@ func (oc *Controller) addUpdateNodeEvent(node *kapi.Node, nSyncs *nodeSyncs) err
 		}
 	}
 
-	// ensure pods that already exist on this node have their logical ports created
-	options := metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", node.Name).String()}
-	pods, err := oc.client.CoreV1().Pods(metav1.NamespaceAll).List(context.TODO(), options)
-	if err != nil {
-		klog.Errorf("Unable to list existing pods on node: %s, existing pods on this node may not function")
-	} else if nSyncs.syncNode { // do this only if its a new node add
-		klog.V(5).Infof("When adding node %s, found %d pods to add to retryPods", node.Name, len(pods.Items))
-		for _, pod := range pods.Items {
-			pod := pod
-			if util.PodCompleted(&pod) {
-				continue
+	if util.IsNodeGlobalAz(node) {
+		// ensure pods that already exist on this node have their logical ports created
+		options := metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.nodeName", node.Name).String()}
+		pods, err := oc.client.CoreV1().Pods(metav1.NamespaceAll).List(context.TODO(), options)
+		if err != nil {
+			klog.Errorf("Unable to list existing pods on node: %s, existing pods on this node may not function")
+		} else if nSyncs.syncNode { // do this only if its a new node add
+			klog.V(5).Infof("When adding node %s, found %d pods to add to retryPods", node.Name, len(pods.Items))
+			for _, pod := range pods.Items {
+				pod := pod
+				if oc.isPodRelevant(&pod) && !util.PodCompleted(&pod) {
+					klog.V(5).Infof("Adding pod %s/%s to retryPods", pod.Namespace, pod.Name)
+					oc.retryPods.addRetryObjWithAdd(&pod)
+				}
 			}
-			klog.V(5).Infof("Adding pod %s/%s to retryPods", pod.Namespace, pod.Name)
-			oc.retryPods.addRetryObjWithAdd(&pod)
+			oc.retryPods.requestRetryObjs()
 		}
-		oc.retryPods.requestRetryObjs()
+	}
+	if err := oc.syncNodeId(node, false); err != nil {
+		errs = append(errs, err)
 	}
 
 	if len(errs) == 0 {
@@ -1414,7 +1520,7 @@ func (oc *Controller) deleteNodeEvent(node *kapi.Node) error {
 	oc.mgmtPortFailed.Delete(node.Name)
 	oc.gatewaysFailed.Delete(node.Name)
 	oc.nodeClusterRouterPortFailed.Delete(node.Name)
-	return nil
+	return oc.syncNodeId(node, true)
 }
 
 func (oc *Controller) createACLLoggingMeter() error {

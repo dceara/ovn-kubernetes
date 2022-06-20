@@ -103,6 +103,11 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 						namespaceT,
 					},
 				},
+				&v1.NodeList{
+					Items: []v1.Node{
+						*newNode("node1", "192.168.126.202/24"),
+					},
+				},
 				&v1.PodList{
 					Items: []v1.Pod{
 						*newPod(namespaceT.Name, tP.podName, tP.nodeName, tP.podIP),
@@ -282,7 +287,7 @@ var _ = ginkgo.Describe("OVN Namespace Operations", func() {
 
 			expectedDatabaseState = addNodeLogicalFlows(expectedDatabaseState, expectedOVNClusterRouter, expectedNodeSwitch, expectedClusterRouterPortGroup, expectedClusterPortGroup, &node1)
 
-			fakeOvn.controller.joinSwIPManager, _ = lsm.NewJoinLogicalSwitchIPManager(fakeOvn.nbClient, expectedNodeSwitch.UUID, []string{node1.Name})
+			fakeOvn.controller.joinSwIPManager, _ = lsm.NewJoinLogicalSwitchIPManager(fakeOvn.nbClient, expectedNodeSwitch.UUID, []string{node1.Name}, 0)
 			_, err = fakeOvn.controller.joinSwIPManager.EnsureJoinLRPIPs(ovntypes.OVNClusterRouter)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
 			gwLRPIPs, err := fakeOvn.controller.joinSwIPManager.EnsureJoinLRPIPs(node1.Name)

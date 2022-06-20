@@ -43,6 +43,13 @@ const (
 
 	NodeLocalSwitch = "node_local_switch"
 
+	GlobalAz                    = "global-az"
+	GlobalAzID                  = 0
+	AzMax                       = 5000
+	TransitSwitch               = "transit_switch"
+	TransitSwitchToRouterPrefix = "tstor-"
+	RouterToTransitSwitchPrefix = "rtots-"
+
 	// ACL directions
 	DirectionToLPort   = "to-lport"
 	DirectionFromLPort = "from-lport"

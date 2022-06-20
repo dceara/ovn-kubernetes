@@ -33,7 +33,8 @@ func (oc *Controller) syncPodsRetriable(pods []interface{}) error {
 			return fmt.Errorf("spurious object in syncPods: %v", podInterface)
 		}
 		annotations, err := util.UnmarshalPodAnnotation(pod.Annotations)
-		if util.PodScheduled(pod) && util.PodWantsNetwork(pod) && !util.PodCompleted(pod) && err == nil {
+		checkLogicalPort := !oc.local || pod.Spec.NodeName == oc.nodeName
+		if util.PodScheduled(pod) && util.PodWantsNetwork(pod) && !util.PodCompleted(pod) && err == nil && checkLogicalPort {
 			// skip nodes that are not running ovnk (inferred from host subnets)
 			if oc.lsManager.IsNonHostSubnetSwitch(pod.Spec.NodeName) {
 				continue
@@ -60,13 +61,28 @@ func (oc *Controller) syncPodsRetriable(pods []interface{}) error {
 	}
 
 	// get all the nodes from the watchFactory
-	nodes, err := oc.watchFactory.GetNodes()
-	if err != nil {
-		return fmt.Errorf("failed to get nodes: %v", err)
+	var nodes []*kapi.Node
+	var err error
+	if oc.local {
+		node, err := oc.watchFactory.GetNode(oc.nodeName)
+		if err != nil {
+			return fmt.Errorf("failed to get node %s : %v", oc.nodeName, err)
+		}
+		nodes = []*kapi.Node{node}
+	} else {
+		nodes, err = oc.watchFactory.GetNodes()
+
+		if err != nil {
+			return fmt.Errorf("failed to get nodes: %v", err)
+		}
 	}
 
 	var ops []ovsdb.Operation
 	for _, n := range nodes {
+		if oc.local || !util.IsNodeGlobalAz(n) {
+			continue
+		}
+
 		// skip nodes that are not running ovnk (inferred from host subnets)
 		if oc.lsManager.IsNonHostSubnetSwitch(n.Name) {
 			continue

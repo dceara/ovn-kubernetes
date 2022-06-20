@@ -1,6 +1,8 @@
 package libovsdbops
 
 import (
+	"fmt"
+
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
@@ -61,4 +63,41 @@ func UpdateNBGlobalSetOptions(nbClient libovsdbclient.Client, nbGlobal *nbdb.NBG
 	m := newModelClient(nbClient)
 	_, err = m.CreateOrUpdate(opModel)
 	return err
+}
+
+func UpdateNBAvailbilityZoneName(nbClient libovsdbclient.Client, name string) error {
+	// find the nbGlobal table's UUID, we don't have any other way to reliably look this table entry since it can
+	// only be indexed by UUID
+	var oldName string
+	var err error
+	nbGlobal := &nbdb.NBGlobal{}
+	if nbGlobal, err = GetNBGlobal(nbClient, nbGlobal); err != nil && err != libovsdbclient.ErrNotFound {
+		return err
+	}
+
+	if oldName != name {
+		nbGlobal.Name = name
+		opModel := operationModel{
+			Model: nbGlobal,
+			OnModelUpdates: []interface{}{
+				&nbGlobal.Name,
+			},
+		}
+
+		m := newModelClient(nbClient)
+		if _, err := m.CreateOrUpdate(opModel); err != nil {
+			return fmt.Errorf("error while updating NBGlobal Name: %v error %v", name, err)
+		}
+	}
+
+	return nil
+}
+
+func GetNBAvailbilityZoneName(nbClient libovsdbclient.Client) (string, error) {
+	nbGlobal, err := GetNBGlobal(nbClient, &nbdb.NBGlobal{})
+	if err != nil {
+		return "", err
+	}
+
+	return nbGlobal.Name, nil
 }

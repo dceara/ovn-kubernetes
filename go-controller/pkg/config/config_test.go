@@ -299,7 +299,12 @@ var _ = Describe("Config Operations", func() {
 				gomega.Expect(a.PrivKey).To(gomega.Equal(""))
 				gomega.Expect(a.Cert).To(gomega.Equal(""))
 				gomega.Expect(a.CACert).To(gomega.Equal(""))
-				gomega.Expect(a.Address).To(gomega.Equal(""))
+				if a.northbound {
+					gomega.Expect(a.Address).To(gomega.Equal("unix:/var/run/ovn/ovnnb_db.sock"))
+				} else {
+					gomega.Expect(a.Address).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
+				}
+
 				gomega.Expect(a.CertCommonName).To(gomega.Equal(""))
 			}
 			return nil
@@ -368,7 +373,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal(""))
 			gomega.Expect(OvnSouth.Cert).To(gomega.Equal(""))
 			gomega.Expect(OvnSouth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal(""))
+			gomega.Expect(OvnSouth.Address).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
 			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal(""))
 
 			return nil
@@ -443,7 +448,7 @@ var _ = Describe("Config Operations", func() {
 			gomega.Expect(OvnSouth.PrivKey).To(gomega.Equal(""))
 			gomega.Expect(OvnSouth.Cert).To(gomega.Equal(""))
 			gomega.Expect(OvnSouth.CACert).To(gomega.Equal(""))
-			gomega.Expect(OvnSouth.Address).To(gomega.Equal(""))
+			gomega.Expect(OvnSouth.Address).To(gomega.Equal("unix:/var/run/ovn/ovnsb_db.sock"))
 			gomega.Expect(OvnSouth.CertCommonName).To(gomega.Equal(""))
 
 			return nil

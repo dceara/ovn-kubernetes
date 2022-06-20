@@ -731,6 +731,10 @@ func (oc *Controller) processLocalPodSelectorSetPods(policy *knet.NetworkPolicy,
 			return
 		}
 
+		if !oc.isPodRelevant(pod) {
+			return
+		}
+
 		logicalPort := util.GetLogicalPortName(pod.Namespace, pod.Name)
 		var portInfo *lpInfo
 
@@ -816,6 +820,10 @@ func (oc *Controller) processLocalPodSelectorDelPods(np *networkPolicy,
 		pod := obj.(*kapi.Pod)
 
 		if pod.Spec.NodeName == "" {
+			continue
+		}
+
+		if !oc.isPodRelevant(pod) {
 			continue
 		}
 
