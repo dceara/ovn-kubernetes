@@ -66,6 +66,8 @@ export KUBE_CONTAINER_RUNTIME_NAME=containerd
 export NUM_NODES=2
 
 FOCUS=$(echo ${@:1} | sed 's/ /\\s/g')
+FOCUS="e2e multiple external gateway stale conntrack entry deletion validation"
+FOCUS=$(echo $FOCUS | sed 's/ /\\s/g')
 
 pushd e2e
 

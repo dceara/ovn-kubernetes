@@ -498,7 +498,7 @@ var _ = ginkgo.Describe("e2e multiple external gateway stale conntrack entry del
 
 	},
 		ginkgotable.Entry("IPV4 udp", &addressesv4, "udp"),
-		ginkgotable.Entry("IPV4 tcp", &addressesv4, "tcp"),
+		ginkgotable.FEntry("IPV4 tcp", &addressesv4, "tcp"),
 		ginkgotable.Entry("IPV6 udp", &addressesv6, "udp"),
 		ginkgotable.Entry("IPV6 tcp", &addressesv6, "tcp"))
 
