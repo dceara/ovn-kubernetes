@@ -8,7 +8,7 @@ groomTestList() {
 	echo $(echo "${1}" | sed -e '/^\($\|#\)/d' -e 's/ /\\s/g' | tr '\n' '|' | sed -e 's/|$//')
 }
 
-SKIPPED_TESTS="
+SKIPPED_TESTS+="${SKIPPED_TESTS:+|}
 # PERFORMANCE, DISRUPTIVE, OR UNRELATED TESTS: NOT WANTED FOR CI
 \[Feature:Networking-Performance\]
 \[Feature:PerformanceDNS\]
