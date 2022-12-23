@@ -2,6 +2,7 @@ package libovsdbops
 
 import (
 	"context"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"

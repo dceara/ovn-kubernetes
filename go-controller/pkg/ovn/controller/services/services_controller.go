@@ -57,11 +57,12 @@ func NewController(client clientset.Interface,
 	klog.V(4).Info("Creating event broadcaster")
 
 	c := &Controller{
-		client:           client,
-		nbClient:         nbClient,
-		queue:            workqueue.NewNamedRateLimitingQueue(newRatelimiter(100), controllerName),
-		workerLoopPeriod: time.Second,
-		alreadyApplied:   map[string][]LB{},
+		client:                  client,
+		nbClient:                nbClient,
+		queue:                   workqueue.NewNamedRateLimitingQueue(newRatelimiter(100), controllerName),
+		workerLoopPeriod:        time.Second,
+		alreadyApplied:          map[string][]LB{},
+		alreadyAppliedTemplates: TemplateMap{},
 	}
 
 	// services
@@ -149,16 +150,20 @@ type Controller struct {
 
 	// alreadyApplied is a map of service key -> already applied configuration, so we can short-circuit
 	// if a service's config hasn't changed
-	alreadyApplied     map[string][]LB
-	alreadyAppliedLock sync.Mutex
+	alreadyApplied          map[string][]LB
+	alreadyAppliedTemplates TemplateMap // Indexed by template name.
+	alreadyAppliedLock      sync.Mutex
 
 	// 'true' if Load_Balancer_Group is supported.
 	useLBGroups bool
+
+	// 'true' if Chassis_Template_Var is supported.
+	useTemplates bool
 }
 
 // Run will not return until stopCh is closed. workers determines how many
 // endpoints will be handled in parallel.
-func (c *Controller) Run(workers int, stopCh <-chan struct{}, runRepair, useLBGroups bool) error {
+func (c *Controller) Run(workers int, stopCh <-chan struct{}, runRepair, useLBGroups, useTemplates bool) error {
 	defer utilruntime.HandleCrash()
 	defer c.queue.ShutDown()
 
@@ -166,6 +171,7 @@ func (c *Controller) Run(workers int, stopCh <-chan struct{}, runRepair, useLBGr
 	defer klog.Infof("Shutting down controller %s", controllerName)
 
 	c.useLBGroups = useLBGroups
+	c.useTemplates = useTemplates
 
 	// Wait for the caches to be synced
 	klog.Info("Waiting for informer caches to sync")
@@ -246,11 +252,19 @@ func (c *Controller) handleErr(err error, key interface{}) {
 // That is because such work will be performed in syncService, so all that is needed here is the ability
 // to distinguish what is present in ovn database and this 'dirty' initial value.
 func (c *Controller) initTopLevelCache() error {
+	var err error
+
 	c.alreadyAppliedLock.Lock()
 	defer c.alreadyAppliedLock.Unlock()
 
-	// first, list all load balancers and their respective services
-	services, lbs, err := getServiceLBs(c.nbClient)
+	// First list all the templates.
+	allTemplates, err := listSvcTemplates(c.nbClient)
+	if err != nil {
+		return fmt.Errorf("failed to load templates: %w", err)
+	}
+
+	// Then list all load balancers and their respective services.
+	services, lbs, err := getServiceLBs(c.nbClient, allTemplates)
 	if err != nil {
 		return fmt.Errorf("failed to load balancers: %w", err)
 	}
@@ -355,19 +369,26 @@ func (c *Controller) syncService(key string) error {
 	}
 
 	// Build the abstract LB configs for this service
-	perNodeConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices)
+	perNodeConfigs, templateConfigs, clusterConfigs := buildServiceLBConfigs(service, endpointSlices,
+		c.useLBGroups, c.useTemplates)
 	klog.V(5).Infof("Built service %s LB cluster-wide configs %#v", key, clusterConfigs)
 	klog.V(5).Infof("Built service %s LB per-node configs %#v", key, perNodeConfigs)
+	klog.V(5).Infof("Built service %s LB template configs %#v", key, templateConfigs)
 
 	// Convert the LB configs in to load-balancer objects
-	nodeInfos := c.nodeTracker.allNodes()
+	nodeInfos, nodeIPv4Template, nodeIPv6Template := c.nodeTracker.allNodes()
 	clusterLBs := buildClusterLBs(service, clusterConfigs, nodeInfos, c.useLBGroups)
+	templateLBs := buildTemplateLBs(service, templateConfigs, nodeInfos,
+		&nodeIPv4Template, &nodeIPv6Template)
 	perNodeLBs := buildPerNodeLBs(service, perNodeConfigs, nodeInfos)
 	klog.V(5).Infof("Built service %s cluster-wide LB %#v", key, clusterLBs)
 	klog.V(5).Infof("Built service %s per-node LB %#v", key, perNodeLBs)
-	klog.V(3).Infof("Service %s has %d cluster-wide and %d per-node configs, making %d and %d load balancers",
-		key, len(clusterConfigs), len(perNodeConfigs), len(clusterLBs), len(perNodeLBs))
-	lbs := append(clusterLBs, perNodeLBs...)
+	klog.V(5).Infof("Built service %s template LB %#v", key, templateLBs)
+	klog.V(3).Infof("Service %s has %d cluster-wide, %d per-node configs, %d template configs, making %d (cluster) %d (per node) and %d (template) load balancers",
+		key, len(clusterConfigs), len(perNodeConfigs), len(templateConfigs),
+		len(clusterLBs), len(perNodeLBs), len(templateLBs))
+	lbs := append(clusterLBs, templateLBs...)
+	lbs = append(lbs, perNodeLBs...)
 
 	// Short-circuit if nothing has changed
 	c.alreadyAppliedLock.Lock()
@@ -401,13 +422,32 @@ func (c *Controller) syncService(key string) error {
 }
 
 // RequestFullSync re-syncs every service that currently exists
-func (c *Controller) RequestFullSync() {
+func (c *Controller) RequestFullSync(nodeIPv4Template, nodeIPv6Template *Template) {
 	klog.Info("Full service sync requested")
 	services, err := c.serviceLister.List(labels.Everything())
 	if err != nil {
 		klog.Errorf("Cached lister failed!? %v", err)
 		return
 	}
+	// Resync node IP templates.
+	if c.useTemplates {
+		nodeIPTemplateMap := TemplateMap{}
+		if nodeIPv4Template.len() > 0 {
+			nodeIPTemplateMap[nodeIPv4Template.Name] = nodeIPv4Template
+		}
+		if nodeIPv6Template.len() > 0 {
+			nodeIPTemplateMap[nodeIPv6Template.Name] = nodeIPv6Template
+		}
+
+		nodeIPTemplates := []TemplateMap{
+			nodeIPTemplateMap,
+		}
+		if err := svcCreateOrUpdateTemplateVar(c.nbClient, nodeIPTemplates); err != nil {
+			klog.Errorf("Could not sync node IP templates")
+			return
+		}
+	}
+
 	for _, service := range services {
 		c.onServiceAdd(service)
 	}

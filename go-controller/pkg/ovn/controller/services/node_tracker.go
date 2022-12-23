@@ -28,7 +28,11 @@ type nodeTracker struct {
 	nodes map[string]nodeInfo
 
 	// resyncFn is the function to call so that all service are resynced
-	resyncFn func()
+	resyncFn func(nodeIPv4Template, nodeIPv6Template *Template)
+
+	// Template variables expanding to each chassis' node IP (v4 and v6).
+	nodeIPv4Template *Template
+	nodeIPv6Template *Template
 }
 
 type nodeInfo struct {
@@ -77,7 +81,9 @@ func (ni *nodeInfo) nodeSubnets() []net.IPNet {
 
 func newNodeTracker(nodeInformer coreinformers.NodeInformer) (*nodeTracker, error) {
 	nt := &nodeTracker{
-		nodes: map[string]nodeInfo{},
+		nodes:            map[string]nodeInfo{},
+		nodeIPv4Template: makeTemplate(makeLBNodeIPTemplateName(v1.IPv4Protocol)),
+		nodeIPv6Template: makeTemplate(makeLBNodeIPTemplateName(v1.IPv6Protocol)),
 	}
 
 	_, err := nodeInformer.Informer().AddEventHandler(factory.WithUpdateHandlingForObjReplace(cache.ResourceEventHandlerFuncs{
@@ -124,7 +130,7 @@ func newNodeTracker(nodeInformer coreinformers.NodeInformer) (*nodeTracker, erro
 					return
 				}
 			}
-			nt.removeNodeWithServiceReSync(node.Name)
+			nt.removeNode(node.Name, true)
 		},
 	}))
 	if err != nil {
@@ -158,28 +164,45 @@ func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisI
 	}
 
 	nt.nodes[nodeName] = ni
+	if chassisID != "" {
+		// Services are currently supported only on the node's first IP.
+		// Extract that one and populate the node's IP template value.
+		if globalconfig.IPv4Mode {
+			if ipv4, err := util.MatchFirstIPFamily(false, nodeIPs); err == nil {
+				nt.nodeIPv4Template.Value[chassisID] = ipv4.String()
+			}
+		}
+		if globalconfig.IPv6Mode {
+			if ipv6, err := util.MatchFirstIPFamily(true, nodeIPs); err == nil {
+				nt.nodeIPv6Template.Value[chassisID] = ipv6.String()
+			}
+		}
+	}
+	nodeIPv4Template, nodeIPv6Template := *nt.nodeIPv4Template, *nt.nodeIPv6Template
 	nt.Unlock()
 
 	klog.Infof("Node %s switch + router changed, syncing services", nodeName)
 	// Resync all services
-	nt.resyncFn()
-}
-
-// removeNodeWithServiceReSync removes a node from the LB -> node mapper
-// *and* forces full reconciliation of services.
-func (nt *nodeTracker) removeNodeWithServiceReSync(nodeName string) {
-	nt.removeNode(nodeName)
-	nt.resyncFn()
+	nt.resyncFn(&nodeIPv4Template, &nodeIPv6Template)
 }
 
 // RemoveNode removes a node from the LB -> node mapper
-// We don't need to re-sync here, because any stale LBs
-// will eventually be cleaned up, and they don't have any cost.
-func (nt *nodeTracker) removeNode(nodeName string) {
+// If 'doResync' is true then this also forces a full reconciliation of
+// services.
+func (nt *nodeTracker) removeNode(nodeName string, doResync bool) {
 	nt.Lock()
-	defer nt.Unlock()
 
+	if node, found := nt.nodes[nodeName]; found {
+		delete(nt.nodeIPv4Template.Value, node.chassisID)
+		delete(nt.nodeIPv6Template.Value, node.chassisID)
+	}
 	delete(nt.nodes, nodeName)
+	nodeIPv4Template, nodeIPv6Template := *nt.nodeIPv4Template, *nt.nodeIPv6Template
+	nt.Unlock()
+
+	if doResync {
+		nt.resyncFn(&nodeIPv4Template, &nodeIPv6Template)
+	}
 }
 
 // UpdateNode is called when a node's gateway router / switch / IPs have changed
@@ -191,7 +214,7 @@ func (nt *nodeTracker) updateNode(node *v1.Node) {
 	if err != nil || hsn == nil {
 		// usually normal; means the node's gateway hasn't been initialized yet
 		klog.Infof("Node %s has invalid / no HostSubnet annotations (probably waiting on initialization): %v", node.Name, err)
-		nt.removeNode(node.Name)
+		nt.removeNode(node.Name, false)
 		return
 	}
 
@@ -225,8 +248,9 @@ func (nt *nodeTracker) updateNode(node *v1.Node) {
 	)
 }
 
-// allNodes returns a list of all nodes (and their relevant information)
-func (nt *nodeTracker) allNodes() []nodeInfo {
+// allNodes returns a list of all nodes (and their relevant information) along
+// with the node's IPv4 and IPv6 templates.
+func (nt *nodeTracker) allNodes() ([]nodeInfo, Template, Template) {
 	nt.Lock()
 	defer nt.Unlock()
 
@@ -239,5 +263,5 @@ func (nt *nodeTracker) allNodes() []nodeInfo {
 	// so that other operations that consume this data can just do a DeepEquals of things
 	// (e.g. LB routers + switches) without having to do set arithmetic
 	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out
+	return out, *nt.nodeIPv4Template, *nt.nodeIPv6Template
 }

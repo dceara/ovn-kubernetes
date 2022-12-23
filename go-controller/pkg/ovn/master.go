@@ -386,7 +386,7 @@ func (oc *DefaultNetworkController) ensureNodeLogicalNetwork(node *kapi.Node, ho
 		return err
 	}
 
-	return oc.createNodeLogicalSwitch(node.Name, hostSubnets, oc.loadBalancerGroupUUID)
+	return oc.createNodeLogicalSwitch(node.Name, hostSubnets, oc.clusterLoadBalancerGroupUUID, oc.switchLoadBalancerGroupUUID)
 }
 
 func (oc *DefaultNetworkController) addNode(node *kapi.Node) ([]*net.IPNet, error) {
@@ -479,6 +479,13 @@ func (oc *DefaultNetworkController) deleteStaleNodeChassis(node *kapi.Node) erro
 		klog.V(5).Infof("Node %s now has a new chassis ID, delete its stale chassis %s in SBDB", node.Name, staleChassis)
 		p := func(item *sbdb.Chassis) bool {
 			return item.Name == staleChassis
+		}
+		if err = libovsdbops.DeleteChassisTemplateRecord(oc.nbClient, []*nbdb.ChassisTemplateVar{{Chassis: staleChassis}}...); err != nil {
+			// Send an event and Log on failure
+			oc.recorder.Eventf(node, kapi.EventTypeWarning, "ErrorMismatchChassis",
+				"Node %s is now with a new chassis ID. Its stale chassis template vars are still in the NBDB",
+				node.Name)
+			return fmt.Errorf("node %s is now with a new chassis ID. Its stale chassis template vars are still in the NBDB", node.Name)
 		}
 		if err = libovsdbops.DeleteChassisWithPredicate(oc.sbClient, p); err != nil {
 			// Send an event and Log on failure
@@ -593,13 +600,20 @@ func (oc *DefaultNetworkController) syncNodesPeriodic() {
 		delete(chassisHostNameMap, nodeName)
 	}
 
-	staleChassis := []*sbdb.Chassis{}
-	for _, v := range chassisHostNameMap {
-		staleChassis = append(staleChassis, v)
+	staleChassis := make([]*sbdb.Chassis, 0, len(chassisHostNameMap))
+	staleChassisTemplateVars := make([]*nbdb.ChassisTemplateVar, 0, len(chassisHostNameMap))
+	for _, chassis := range chassisHostNameMap {
+		staleChassis = append(staleChassis, chassis)
+		staleChassisTemplateVars = append(staleChassisTemplateVars, &nbdb.ChassisTemplateVar{Chassis: chassis.Name})
 	}
 
 	if err = libovsdbops.DeleteChassis(oc.sbClient, staleChassis...); err != nil {
 		klog.Errorf("Failed Deleting chassis %v error: %v", chassisHostNameMap, err)
+		return
+	}
+
+	if err = libovsdbops.DeleteChassisTemplateRecord(oc.nbClient, staleChassisTemplateVars...); err != nil {
+		klog.Errorf("Failed Deleting chassis template vars %v error: %v", chassisHostNameMap, err)
 		return
 	}
 }
@@ -652,6 +666,7 @@ func (oc *DefaultNetworkController) syncNodes(nodes []interface{}) error {
 
 	knownChassisNames := sets.NewString()
 	chassisDeleteList := []*sbdb.Chassis{}
+	chassisTemplateVarsDeleteList := []*nbdb.ChassisTemplateVar{}
 	for _, chassis := range chassisList {
 		knownChassisNames.Insert(chassis.Name)
 		// skip chassis that have a corresponding node
@@ -676,11 +691,15 @@ func (oc *DefaultNetworkController) syncNodes(nodes []interface{}) error {
 		// the Chassis does not exist in SBDB, DeleteChassis will remove the
 		// ChassisPrivate.
 		chassisDeleteList = append(chassisDeleteList, &sbdb.Chassis{Name: chassis.Name})
+		chassisTemplateVarsDeleteList = append(chassisTemplateVarsDeleteList, &nbdb.ChassisTemplateVar{Chassis: chassis.Name})
 	}
 
 	// Delete stale chassis and associated chassis private
 	if err := libovsdbops.DeleteChassis(oc.sbClient, chassisDeleteList...); err != nil {
 		return fmt.Errorf("failed deleting chassis %v: %v", chassisDeleteList, err)
+	}
+	if err = libovsdbops.DeleteChassisTemplateRecord(oc.nbClient, chassisTemplateVarsDeleteList...); err != nil {
+		return fmt.Errorf("failed deleting chassis template variables for %v: %v", chassisDeleteList, err)
 	}
 	return nil
 }
@@ -831,6 +850,13 @@ func (oc *DefaultNetworkController) deleteNodeEvent(node *kapi.Node) error {
 	if err := oc.deleteNode(node.Name); err != nil {
 		return err
 	}
+
+	if chassisID, err := util.ParseNodeChassisIDAnnotation(node); err == nil {
+		if err = libovsdbops.DeleteChassisTemplateRecord(oc.nbClient, []*nbdb.ChassisTemplateVar{{Chassis: chassisID}}...); err != nil {
+			return fmt.Errorf("failed deleting chassis template variables for %s: %v", node.Name, err)
+		}
+	}
+
 	oc.lsManager.DeleteSwitch(node.Name)
 	oc.addNodeFailed.Delete(node.Name)
 	oc.mgmtPortFailed.Delete(node.Name)
