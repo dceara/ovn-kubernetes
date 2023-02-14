@@ -48,7 +48,7 @@ func extractUUIDsFromModels(models interface{}) []string {
 }
 
 // buildMutationsFromFields builds mutations that use the fields as values.
-func buildMutationsFromFields(fields []interface{}, mutator ovsdb.Mutator) ([]model.Mutation, error) {
+func buildMutationsFromFields(fields []interface{}, preserveExistingMapValues bool, mutator ovsdb.Mutator) ([]model.Mutation, error) {
 	mutations := []model.Mutation{}
 	for _, field := range fields {
 		switch v := field.(type) {
@@ -85,6 +85,20 @@ func buildMutationsFromFields(fields []interface{}, mutator ovsdb.Mutator) ([]mo
 					mutations = append(mutations, mutation)
 				}
 				continue
+			}
+			if !preserveExistingMapValues {
+				removeKeys := make([]string, 0, len(*v))
+				for key := range *v {
+					removeKeys = append(removeKeys, key)
+				}
+				if len(removeKeys) > 0 {
+					mutation := model.Mutation{
+						Field:   field,
+						Mutator: ovsdb.MutateOperationDelete,
+						Value:   removeKeys,
+					}
+					mutations = append(mutations, mutation)
+				}
 			}
 			mutation := model.Mutation{
 				Field:   field,
@@ -154,6 +168,11 @@ type operationModel struct {
 	// Model will have UUID set, and it can be used in DoAfter. This only works
 	// if BulkOp is false and Model != nil.
 	DoAfter func()
+	// PreserveExistingMapValuesOnMutate set to true creates mutations that
+	// do not remove existing map values.  When set to false (default) a
+	// MutateOperationDelete is generated automatically for every updated
+	// key (seeRFC 7047, section 5.1).
+	PreserveExistingMapValuesOnMutate bool
 }
 
 func onModelUpdatesNone() []interface{} {
@@ -363,7 +382,7 @@ func (m *modelClient) mutate(lookUpModel interface{}, opModel *operationModel, m
 	if opModel.OnModelMutations == nil {
 		return nil, nil
 	}
-	modelMutations, err := buildMutationsFromFields(opModel.OnModelMutations, mutator)
+	modelMutations, err := buildMutationsFromFields(opModel.OnModelMutations, opModel.PreserveExistingMapValuesOnMutate, mutator)
 	if len(modelMutations) == 0 || err != nil {
 		return nil, err
 	}

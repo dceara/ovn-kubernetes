@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/onsi/ginkgo"
 	"reflect"
+	"sort"
 	"testing"
 
 	"github.com/onsi/gomega/types"
@@ -1442,11 +1443,12 @@ func TestBuildMutationsFromFields(t *testing.T) {
 	var nilSliceField []string
 
 	tt := []struct {
-		name      string
-		fields    []interface{}
-		mutator   ovsdb.Mutator
-		mutations []model.Mutation
-		err       bool
+		name                      string
+		fields                    []interface{}
+		mutator                   ovsdb.Mutator
+		preserveExistingMapValues bool
+		mutations                 []model.Mutation
+		err                       bool
 	}{
 		{
 			name:   "build mutation over invalid type",
@@ -1454,9 +1456,27 @@ func TestBuildMutationsFromFields(t *testing.T) {
 			err:    true,
 		},
 		{
-			name:    "build insert mutation over map",
+			name:    "build update mutation over map",
 			fields:  []interface{}{&mapField},
 			mutator: ovsdb.MutateOperationInsert,
+			mutations: []model.Mutation{
+				{
+					Field:   &mapField,
+					Mutator: ovsdb.MutateOperationDelete,
+					Value:   []string{"", "key1", "key2"},
+				},
+				{
+					Field:   &mapField,
+					Mutator: ovsdb.MutateOperationInsert,
+					Value:   mapField,
+				},
+			},
+		},
+		{
+			name:                      "build update mutation over map (preserve key values)",
+			fields:                    []interface{}{&mapField},
+			mutator:                   ovsdb.MutateOperationInsert,
+			preserveExistingMapValues: true,
 			mutations: []model.Mutation{
 				{
 					Field:   &mapField,
@@ -1530,9 +1550,14 @@ func TestBuildMutationsFromFields(t *testing.T) {
 	}
 
 	for _, tCase := range tt {
-		mutations, err := buildMutationsFromFields(tCase.fields, tCase.mutator)
+		mutations, err := buildMutationsFromFields(tCase.fields, tCase.preserveExistingMapValues, tCase.mutator)
 		if err != nil && !tCase.err {
 			t.Fatalf("%s: got unexpected error: %v", tCase.name, err)
+		}
+		for _, m := range mutations {
+			if v, ok := m.Value.([]string); ok {
+				sort.Strings(v)
+			}
 		}
 		if !reflect.DeepEqual(mutations, tCase.mutations) {
 			t.Fatalf("%s: unexpected mutations, got: %+v expected: %+v", tCase.name, mutations, tCase.mutations)
