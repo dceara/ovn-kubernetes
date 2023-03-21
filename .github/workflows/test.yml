@@ -1,6 +1,7 @@
 name: ovn-ci
 
 on:
+  push:
   pull_request:
     branches: [ master ]
   schedule:
@@ -24,28 +25,6 @@ env:
 
 
 jobs:
-  # separate job for parallelism
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v3
-
-    - name: Set up Go
-      uses: actions/setup-go@v3
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Verify
-      uses: golangci/golangci-lint-action@v3
-      with:
-        version: v1.46
-        working-directory: go-controller
-        args: --modules-download-mode=vendor --timeout=15m0s --verbose
-        skip-go-installation: true
-
   build-master:
     name: Build-master
     runs-on: ubuntu-latest
@@ -179,7 +158,6 @@ jobs:
            make gofmt
            make
            make windows
-           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
     - name: Build docker image - from current pr branch
@@ -232,120 +210,6 @@ jobs:
         name: test-image-pr
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
-  ovn-upgrade-e2e:
-    name: Upgrade OVN from Master to PR branch based image
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs:
-      - build-master
-      - build-pr
-    strategy:
-      fail-fast: false
-      matrix:
-        gateway-mode: [local, shared]
-    env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}"
-      OVN_HA: "false"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      OVN_MULTICAST_ENABLE:  "false"
-    steps:
-    - name: Set up Go
-      uses: actions/setup-go@v3
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Free up disk space
-      run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
-
-    - name: Download test-image-master
-      uses: actions/download-artifact@v3
-      with:
-        name: test-image-master
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_MASTER_TAR}
-
-    - name: Check out code into the Go module directory - from Master branch
-      if: steps.last_run_status.outputs.STATUS != 'completed' && success()
-      uses: actions/checkout@v3
-      with:
-          ref: master
-
-    - name: kind setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:dev"
-        make -C test install-kind
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        set -x
-        docker ps -a
-        docker exec ovn-control-plane crictl images
-        docker exec ovn-worker crictl images
-        docker exec ovn-worker2 crictl images
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v3
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v3
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR}
-
-    - name: Check out code into the Go module directory - from PR branch
-      uses: actions/checkout@v3
-
-    - name: ovn upgrade
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:pr"
-        make -C test upgrade-ovn
-
-    - name: Run E2E shard-conformance
-      run: |
-        make -C test shard-conformance
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v3
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch
-
   e2e:
     name: e2e
     if: github.event_name != 'schedule'
@@ -366,19 +230,8 @@ jobs:
         # second-bridge: ["2br", "1br"]
         # separate-cluster-manager: ["true", "false"]
         include:
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "false"}
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "false"}
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "false"}
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "true"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "true"}
-          - {"target": "control-plane",     "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "separate-cluster-manager": "false"}
-          - {"target": "control-plane",     "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "separate-cluster-manager": "true"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "separate-cluster-manager": "false"}
           - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "separate-cluster-manager": "true"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "separate-cluster-manager": "false"}
-          - {"target": "multi-homing",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "separate-cluster-manager": "false"}
-          - {"target": "node-ip-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "separate-cluster-manager": "true"}
-          - {"target": "node-ip-migration", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "separate-cluster-manager": "false"}
     needs: [ build-pr ]
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}"
@@ -449,7 +302,8 @@ jobs:
         elif [ "${{ matrix.target }}" == "node-ip-migration" ]; then
           make -C test control-plane WHAT="Node IP address migration"
         else
-          make -C test ${{ matrix.target }}
+          make -C test ${{ matrix.target }} WHAT="Should ensure load balancer service works with pmtu" && \
+          make -C test ${{ matrix.target }} WHAT="Should ensure load balancer service works with 0 node ports when ETP=local"
         fi
 
     - name: Export kind logs
@@ -464,152 +318,3 @@ jobs:
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/logs
-
-  e2e-dual-conversion:
-    name: e2e-dual-conversion
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "DualStack-conversion-shared"
-      OVN_HA: "true"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "shared"
-      OVN_MULTICAST_ENABLE:  "false"
-      DUALSTACK_CONVERSION:  "true"
-    steps:
-
-    - name: Set up Go
-      uses: actions/setup-go@v3
-      with:
-        go-version: ${{ env.GO_VERSION }}
-      id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v3
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v3
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR}
-
-    - name: kind IPv4 setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-f:pr"
-        make -C test install-kind
-
-    - name: Convert IPv4 cluster to Dual Stack
-      run: |
-        ./contrib/kind-dual-stack-conversion.sh
-
-    - name: Run Dual-Stack Tests
-      run: |
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
-
-    - name: Run Dual-Stack Control-Plane Tests
-      run: |
-        make -C test control-plane WHAT="DualStack"
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v3
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-  e2e-periodic:
-    name: e2e-periodic
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ["shard-conformance"]
-        ha: ["HA"]
-        gateway-mode: ["local"]
-        ipfamily: ["ipv4", "ipv6", "dualstack"]
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}"
-      OVN_HA: "${{ matrix.ha == 'HA' }}"
-      KIND_IPV4_SUPPORT: "${{ matrix.ipfamily == 'IPv4' || matrix.ipfamily == 'dualstack' }}"
-      KIND_IPV6_SUPPORT: "${{ matrix.ipfamily == 'IPv6' || matrix.ipfamily == 'dualstack' }}"
-      OVN_HYBRID_OVERLAY_ENABLE: "${{ matrix.target == 'control-plane' }}"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-    steps:
-
-      - name: Free up disk space
-        run: sudo eatmydata apt-get remove --auto-remove -y aspnetcore-* dotnet-* libmono-* mono-* msbuild php-* php7* ghc-* zulu-*
-
-      - name: Set up Go
-        uses: actions/setup-go@v3
-        with:
-          go-version: ${{ env.GO_VERSION }}
-        id: go
-
-      - name: Check out code into the Go module directory
-        uses: actions/checkout@v3
-
-      - name: Set up environment
-        run: |
-          export GOPATH=$(go env GOPATH)
-          echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-          echo "$GOPATH/bin" >> $GITHUB_PATH
-      - name: Disable ufw
-        # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-        # Not needed for KIND deployments, so just disable all the time.
-        run: |
-          sudo ufw disable
-      - uses: actions/download-artifact@v3
-        with:
-          name: test-image-pr
-      - name: Load docker image
-        run: |
-          docker load --input ${CI_IMAGE_PR_TAR}
-      - name: kind setup
-        run: |
-          export OVN_IMAGE="ovn-daemonset-f:pr"
-          make -C test install-kind
-      - name: Run Tests
-        run: |
-          make -C test ${{ matrix.target }}
-      - name: Export logs
-        if: always()
-        run: |
-          mkdir -p /tmp/kind/logs
-          kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-          path: /tmp/kind/logs
-

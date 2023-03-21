@@ -4,7 +4,7 @@
 set -ex
 
 export KUBECONFIG=${HOME}/ovn.conf
-export OVN_IMAGE=${OVN_IMAGE:-ovn-daemonset-f:pr}
+export OVN_IMAGE=${OVN_IMAGE:-localhost/ovn-daemonset-f:dev}
 
 kubectl_wait_pods() {
   # Check that everything is fine and running. IPv6 cluster seems to take a little
