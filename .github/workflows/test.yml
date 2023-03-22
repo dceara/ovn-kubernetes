@@ -302,7 +302,7 @@ jobs:
         elif [ "${{ matrix.target }}" == "node-ip-migration" ]; then
           make -C test control-plane WHAT="Node IP address migration"
         else
-          make -C test ${{ matrix.target }} WHAT="Should ensure load balancer service works with 0 node ports when ETP=local"
+          make -C test ${{ matrix.target }} WHAT="Should ensure load balancer service works with pmtu"
         fi
 
     - name: Export kind logs
