@@ -20,6 +20,9 @@ ARG ovnver=ovn-23.06.0-0.fc37
 ARG TARGETPLATFORM
 ARG BUILDPLATFORM
 
+ARG UPSTREAM_OVS_RPMS_BRANCH
+ARG UPSTREAM_OVN_RPMS_BRANCH
+
 RUN echo "Running on $BUILDPLATFORM, building for $TARGETPLATFORM"
 
 # install needed rpms - openvswitch must be 2.10.4 or higher
@@ -38,6 +41,16 @@ RUN mkdir -p /var/run/openvswitch
 
 RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] || [ -z "$TARGETPLATFORM"] ; then koji download-build $ovnver --arch=x86_64  ; \
     else koji download-build $ovnver --arch=aarch64 ; fi 
+
+COPY ./github-scripts/download-artifact /tmp
+
+RUN if [ -n "$UPSTREAM_OVS_RPMS_BRANCH"]; then \
+    /tmp/download-artifact openvswitch ovs $UPSTREAM_OVS_RPMS_BRANCH rpm-packages \
+fi
+
+RUN if [ -n "$UPSTREAM_OVN_RPMS_BRANCH"]; then \
+    /tmp/download-artifact ovn-org ovn $UPSTREAM_OVN_RPMS_BRANCH rpm-packages \
+fi
 
 RUN rpm -Uhv --nodeps --force *.rpm
 

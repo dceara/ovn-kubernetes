@@ -1,0 +1,19 @@
+#!/bin/sh
+
+set -o errexit -o pipefail
+
+function get-artifact() {
+    local org=$1
+    local repo=$2
+    local branch=$3
+    local artifact_name=$4
+    local artifact_url=$(
+        curl -sL "https://api.github.com/repos/$org/$repo/actions/artifacts?$per_page=1&branch=$branch&event=push&status=success&name=$artifact_name" | 
+            jq -r .artifacts[0].archive_download_url
+    )
+    curl -H "Accept: application/vnd.github+json" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -L -o artifact.zip "$artifact_url"
+    unzip artifact.zip
+    rm artifact.zip
+}
+
+get-artifact $@
