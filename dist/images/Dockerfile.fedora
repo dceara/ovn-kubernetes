@@ -32,7 +32,7 @@ RUN INSTALL_PKGS=" \
 	libpcap hostname kubernetes-client util-linux \
         ovn ovn-central ovn-host python3-openvswitch tcpdump openvswitch-test python3-pyOpenSSL \
 	iptables iproute iputils strace socat koji \
-        libreswan openvswitch-ipsec jq unzip \
+        libreswan openvswitch-ipsec jq unzip dnf-plugins-core rpm-build \
         " && \
 	dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS && \
 	dnf clean all && rm -rf /var/cache/dnf/*
@@ -55,7 +55,10 @@ else \
 fi
 
 RUN if [ -n "$UPSTREAM_OVS_RPMS_BRANCH" ] || [ -n "$UPSTREAM_OVN_RPMS_BRANCH" ]; then \
-    rpm -Uhv --nodeps --force RPMS/x86_64/*.rpm; \
+    rpm -i SRPMS/*.src.rpm; \
+    dnf builddep -y ~/rpmbuild/SPECS/*.spec; \
+    rpmbuild --without check -ba ~/rpmbuild/SPECS/*.spec; \
+    rpm -Uhv --nodeps --force ~/rpmbuild/RPMS/x86_64/*.rpm; \
 fi
 
 RUN rpm -Uhv --nodeps --force *.rpm || true
