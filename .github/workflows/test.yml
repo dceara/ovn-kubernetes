@@ -2,6 +2,7 @@ name: ovn-ci
 
 on:
   merge_group:
+  push:
   pull_request:
     branches: [ master ]
   schedule:
@@ -61,12 +62,12 @@ jobs:
         sudo service docker restart
     # Select which dockerfile to use.
     - name: Use upstream OVN main branch for scheduled jobs
-      if: github.event_name == 'schedule'
+      if: github.event_name != 'schedule'
       run: |
         echo "OVN_DOCKERFILE=Dockerfile.fedora.dev" >> $GITHUB_ENV
 
     - name: Use Fedora OVN rpms for user triggered jobs
-      if: github.event_name != 'schedule'
+      if: github.event_name == 'schedule'
       run: |
         echo "OVN_DOCKERFILE=Dockerfile.fedora" >> $GITHUB_ENV
     # Create a cache for the built master image
@@ -163,12 +164,12 @@ jobs:
         sudo service docker restart
     # Select which dockerfile to use.
     - name: Use upstream OVN main branch for scheduled jobs
-      if: github.event_name == 'schedule'
+      if: github.event_name != 'schedule'
       run: |
         echo "OVN_DOCKERFILE=Dockerfile.fedora.dev" >> $GITHUB_ENV
 
     - name: Use Fedora OVN rpms for user triggered jobs
-      if: github.event_name != 'schedule'
+      if: github.event_name == 'schedule'
       run: |
         echo "OVN_DOCKERFILE=Dockerfile.fedora" >> $GITHUB_ENV
     # Create a cache for the build PR image
