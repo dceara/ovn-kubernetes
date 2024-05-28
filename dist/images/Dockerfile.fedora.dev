@@ -34,13 +34,15 @@ RUN INSTALL_PKGS=" \
     dnf clean all && rm -rf /var/cache/dnf/*
 
 # Clone OVS Source Code.
-ARG OVS_REPO=https://github.com/openvswitch/ovs.git
-ARG OVS_BRANCH=master
+ARG OVS_REPO=https://github.com/dceara/ovs.git
+ARG OVS_BRANCH=devconf-2024-add-unixctl-command-ufid-oflow
 WORKDIR /root
 RUN git clone $OVS_REPO --single-branch --branch=$OVS_BRANCH
 
 # Build OVS rpms.
 WORKDIR /root/ovs
+RUN sed -e 's/@VERSION@/0.0.1/' rhel/openvswitch-fedora.spec.in > /tmp/ovs.spec
+RUN dnf builddep -y /tmp/ovs.spec
 RUN ./boot.sh
 RUN ./configure
 RUN make rpm-fedora
