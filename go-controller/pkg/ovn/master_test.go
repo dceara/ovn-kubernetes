@@ -1842,16 +1842,20 @@ func newNetworkClusterPortGroup(netControllerName string) *nbdb.PortGroup {
 	return pg
 }
 
+func newNetworkRouterPortGroup(netControllerName string) *nbdb.PortGroup {
+	fakeController := getFakeController(netControllerName)
+	pgIDs := fakeController.getClusterPortGroupDbIDs(types.ClusterRtrPortGroupNameBase)
+	pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
+	pg.UUID = pgIDs.String()
+	return pg
+}
+
 func newClusterPortGroup() *nbdb.PortGroup {
 	return newNetworkClusterPortGroup(DefaultNetworkControllerName)
 }
 
 func newRouterPortGroup() *nbdb.PortGroup {
-	fakeController := getFakeController(DefaultNetworkControllerName)
-	pgIDs := fakeController.getClusterPortGroupDbIDs(types.ClusterRtrPortGroupNameBase)
-	pg := libovsdbutil.BuildPortGroup(pgIDs, nil, nil)
-	pg.UUID = pgIDs.String()
-	return pg
+	return newNetworkRouterPortGroup(DefaultNetworkControllerName)
 }
 
 func newOVNClusterRouter() *nbdb.LogicalRouter {
