@@ -9,6 +9,7 @@ import (
 	"time"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -17,6 +18,7 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/metrics"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/nbdb"
 	addressset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/address_set"
+	svccontroller "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/controller/services"
 	lsm "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/logical_switch_manager"
 	zoneinterconnect "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/ovn/zone_interconnect"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/persistentips"
@@ -237,10 +239,25 @@ type SecondaryLayer2NetworkController struct {
 	defaultCOPPUUID string
 
 	gatewayManagers sync.Map
+
+	// Cluster wide Load_Balancer_Group UUID.
+	// Includes the cluster switch and all node gateway routers.
+	clusterLoadBalancerGroupUUID string
+
+	// Cluster wide switch Load_Balancer_Group UUID.
+	// Includes the cluster switch.
+	switchLoadBalancerGroupUUID string
+
+	// Cluster wide router Load_Balancer_Group UUID.
+	// Includes all node gateway routers.
+	routerLoadBalancerGroupUUID string
+
+	// Controller in charge of services
+	svcController *svccontroller.Controller
 }
 
 // NewSecondaryLayer2NetworkController create a new OVN controller for the given secondary layer2 nad
-func NewSecondaryLayer2NetworkController(cnci *CommonNetworkControllerInfo, netInfo util.NetInfo) *SecondaryLayer2NetworkController {
+func NewSecondaryLayer2NetworkController(cnci *CommonNetworkControllerInfo, netInfo util.NetInfo) (*SecondaryLayer2NetworkController, error) {
 
 	stopChan := make(chan struct{})
 
@@ -251,6 +268,24 @@ func NewSecondaryLayer2NetworkController(cnci *CommonNetworkControllerInfo, netI
 	if netInfo.IsPrimaryNetwork() {
 		lsManagerFactoryFn = lsm.NewL2SwitchManagerForUserDefinedPrimaryNetwork
 	}
+
+	var svcController *svccontroller.Controller
+	if util.IsNetworkSegmentationSupportEnabled() {
+		var err error
+		svcController, err = svccontroller.NewController(
+			cnci.client, cnci.nbClient,
+			cnci.watchFactory.ServiceCoreInformer(),
+			cnci.watchFactory.EndpointSliceCoreInformer(),
+			cnci.watchFactory.NodeCoreInformer(),
+			cnci.watchFactory.NADInformer().Lister(),
+			cnci.recorder,
+			netInfo,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create new service controller while creating new layer2 network controller: %w", err)
+		}
+	}
+
 	oc := &SecondaryLayer2NetworkController{
 		BaseSecondaryLayer2NetworkController: BaseSecondaryLayer2NetworkController{
 
@@ -276,6 +311,7 @@ func NewSecondaryLayer2NetworkController(cnci *CommonNetworkControllerInfo, netI
 		},
 		mgmtPortFailed:  sync.Map{},
 		gatewayManagers: sync.Map{},
+		svcController:   svcController,
 	}
 
 	if config.OVNKubernetesFeature.EnableInterconnect {
@@ -305,7 +341,7 @@ func NewSecondaryLayer2NetworkController(cnci *CommonNetworkControllerInfo, netI
 	oc.multicastSupport = false
 
 	oc.initRetryFramework()
-	return oc
+	return oc, nil
 }
 
 // Start starts the secondary layer2 controller, handles all events and creates all needed logical entities
@@ -325,7 +361,22 @@ func (oc *SecondaryLayer2NetworkController) Start(ctx context.Context) error {
 }
 
 func (oc *SecondaryLayer2NetworkController) run() error {
-	return oc.BaseSecondaryLayer2NetworkController.run()
+	err := oc.BaseSecondaryLayer2NetworkController.run()
+	if err != nil {
+		return err
+	}
+	if oc.svcController != nil {
+		startSvc := time.Now()
+
+		err := oc.StartServiceController(oc.wg, true)
+		endSvc := time.Since(startSvc)
+
+		metrics.MetricOVNKubeControllerSyncDuration.WithLabelValues("service_" + oc.GetNetworkName()).Set(endSvc.Seconds())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Cleanup cleans up logical entities for the given network, called from net-attach-def routine
@@ -362,11 +413,25 @@ func (oc *SecondaryLayer2NetworkController) Init() error {
 	}
 	oc.defaultCOPPUUID = defaultCOPPUUID
 
+	clusterLBGroupUUID, switchLBGroupUUID, routerLBGroupUUID, err := initLoadBalancerGroups(oc.nbClient, oc.NetInfo)
+	if err != nil {
+		return err
+	}
+	oc.clusterLoadBalancerGroupUUID = clusterLBGroupUUID
+	oc.switchLoadBalancerGroupUUID = switchLBGroupUUID
+	oc.routerLoadBalancerGroupUUID = routerLBGroupUUID
+
 	_, err = oc.initializeLogicalSwitch(
 		oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch),
 		oc.Subnets(),
 		oc.ExcludeSubnets(),
+		oc.clusterLoadBalancerGroupUUID,
+		oc.switchLoadBalancerGroupUUID,
 	)
+	if err != nil {
+		return err
+	}
+
 	return err
 }
 
@@ -592,6 +657,7 @@ func (oc *SecondaryLayer2NetworkController) newGatewayManager(nodeName string) *
 		oc.nbClient,
 		oc.NetInfo,
 		oc.watchFactory,
+		oc.gatewayOptions()...,
 	)
 }
 
@@ -611,4 +677,31 @@ func (oc *SecondaryLayer2NetworkController) gatewayManagerForNode(nodeName strin
 		}
 		return gwManager
 	}
+}
+
+func (oc *SecondaryLayer2NetworkController) gatewayOptions() []GatewayOption {
+	var opts []GatewayOption
+	if oc.clusterLoadBalancerGroupUUID != "" {
+		opts = append(opts, WithLoadBalancerGroups(
+			oc.routerLoadBalancerGroupUUID,
+			oc.clusterLoadBalancerGroupUUID,
+			oc.switchLoadBalancerGroupUUID,
+		))
+	}
+	return opts
+}
+
+func (oc *SecondaryLayer2NetworkController) StartServiceController(wg *sync.WaitGroup, runRepair bool) error {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		useLBGroups := oc.clusterLoadBalancerGroupUUID != ""
+		// use 5 workers like most of the kubernetes controllers in the
+		// kubernetes controller-manager
+		err := oc.svcController.Run(5, oc.stopChan, runRepair, useLBGroups, oc.svcTemplateSupport)
+		if err != nil {
+			klog.Errorf("Error running OVN Kubernetes Services controller: %v", err)
+		}
+	}()
+	return nil
 }
