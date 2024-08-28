@@ -43,8 +43,6 @@ type nodeInfo struct {
 	l3gatewayAddresses []net.IP
 	// The list of physical IPs and subnet masks the node has, as reported by the host-cidrs annotation
 	hostAddresses []net.IP
-	// The pod network subnet(s)
-	podSubnets []net.IPNet
 	// the name of the node's GatewayRouter, or "" of non-existent
 	gatewayRouterName string
 	// The name of the node's switch - never empty
@@ -151,22 +149,17 @@ func (nt *nodeTracker) Start(nodeInformer coreinformers.NodeInformer) (cache.Res
 
 // updateNodeInfo updates the node info cache, and syncs all services
 // if it changed.
-func (nt *nodeTracker) updateNodeInfo(nodeName, switchName, routerName, chassisID string, l3gatewayAddresses,
-	hostAddresses []net.IP, podSubnets []*net.IPNet, zone string, nodePortDisabled, migrated bool) {
+func (nt *nodeTracker) updateNodeInfo(nodeName string, switchName string, routerName string, chassisID string, l3gatewayAddresses []net.IP, hostAddresses []net.IP, zone string, nodePortDisabled bool, migrated bool) {
 	ni := nodeInfo{
 		name:               nodeName,
 		l3gatewayAddresses: l3gatewayAddresses,
 		hostAddresses:      hostAddresses,
-		podSubnets:         make([]net.IPNet, 0, len(podSubnets)),
 		gatewayRouterName:  routerName,
 		switchName:         switchName,
 		chassisID:          chassisID,
 		nodePortDisabled:   nodePortDisabled,
 		zone:               zone,
 		migrated:           migrated,
-	}
-	for i := range podSubnets {
-		ni.podSubnets = append(ni.podSubnets, *podSubnets[i]) // de-pointer
 	}
 
 	klog.Infof("Node %s switch + router changed, syncing services", nodeName)
@@ -209,10 +202,9 @@ func (nt *nodeTracker) removeNode(nodeName string) {
 // The gateway router will exist sometime after the L3Gateway annotation is set.
 func (nt *nodeTracker) updateNode(node *v1.Node) {
 	klog.V(2).Infof("Processing possible switch / router updates for node %s", node.Name)
-	hsn, err := util.ParseNodeHostSubnetAnnotation(node, nt.netInfo.GetNetworkName())
-	if err != nil || hsn == nil || util.NoHostSubnet(node) {
+	if util.NoHostSubnet(node) {
 		// usually normal; means the node's gateway hasn't been initialized yet
-		klog.Infof("Node %s has invalid / no HostSubnet annotations (probably waiting on initialization), or it's a hybrid overlay node: %v", node.Name, err)
+		klog.Infof("Node %s is a hybrid overlay node", node.Name)
 		nt.removeNode(node.Name)
 		return
 	}
@@ -255,7 +247,6 @@ func (nt *nodeTracker) updateNode(node *v1.Node) {
 		chassisID,
 		l3gatewayAddresses,
 		hostAddressesIPs,
-		hsn,
 		util.GetNodeZone(node),
 		!nodePortEnabled,
 		util.HasNodeMigratedZone(node),

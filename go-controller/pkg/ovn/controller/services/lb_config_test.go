@@ -1496,7 +1496,6 @@ func Test_buildPerNodeLBs(t *testing.T) {
 			hostAddresses:      []net.IP{net.ParseIP("10.0.0.1"), net.ParseIP("10.0.0.111")},
 			gatewayRouterName:  "gr-node-a",
 			switchName:         "switch-node-a",
-			podSubnets:         []net.IPNet{{IP: net.ParseIP("10.128.0.0"), Mask: net.CIDRMask(24, 32)}},
 		},
 		{
 			name:               nodeB,
@@ -1504,7 +1503,6 @@ func Test_buildPerNodeLBs(t *testing.T) {
 			hostAddresses:      []net.IP{net.ParseIP("10.0.0.2")},
 			gatewayRouterName:  "gr-node-b",
 			switchName:         "switch-node-b",
-			podSubnets:         []net.IPNet{{IP: net.ParseIP("10.128.1.0"), Mask: net.CIDRMask(24, 32)}},
 		},
 	}
 
@@ -1515,7 +1513,6 @@ func Test_buildPerNodeLBs(t *testing.T) {
 			hostAddresses:      []net.IP{net.ParseIP("fd00::1"), net.ParseIP("fd00::111")},
 			gatewayRouterName:  "gr-node-a",
 			switchName:         "switch-node-a",
-			podSubnets:         []net.IPNet{{IP: net.ParseIP("fe00:0:0:0:1::0"), Mask: net.CIDRMask(64, 64)}},
 		},
 		{
 			name:               nodeB,
@@ -1523,7 +1520,6 @@ func Test_buildPerNodeLBs(t *testing.T) {
 			hostAddresses:      []net.IP{net.ParseIP("fd00::2")},
 			gatewayRouterName:  "gr-node-b",
 			switchName:         "switch-node-b",
-			podSubnets:         []net.IPNet{{IP: net.ParseIP("fe00:0:0:0:2::0"), Mask: net.CIDRMask(64, 64)}},
 		},
 	}
 
