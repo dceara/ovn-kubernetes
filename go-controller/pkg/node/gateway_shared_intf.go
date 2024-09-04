@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
@@ -18,8 +21,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 	utilerrors "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util/errors"
-	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
 
 	kapi "k8s.io/api/core/v1"
 	discovery "k8s.io/api/discovery/v1"
@@ -1140,7 +1141,7 @@ func (npwipt *nodePortWatcherIptables) SyncServices(services []interface{}) erro
 	return utilerrors.Join(errors...)
 }
 
-func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]string, error) {
+func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP, udnAllowedServicesIPs []net.IP) ([]string, error) {
 	// CAUTION: when adding new flows where the in_port is ofPortPatch and the out_port is ofPortPhys, ensure
 	// that dl_src is included in match criteria!
 
@@ -1384,7 +1385,39 @@ func flowsForDefaultBridge(bridge *bridgeConfiguration, extraIPs []net.IP) ([]st
 			fmt.Sprintf("cookie=%s, priority=10, table=1, dl_dst=%s, actions=output:%s",
 				defaultOpenFlowCookie, bridgeMacAddress, ofPortHost))
 	}
+
 	defaultNetConfig := bridge.netConfig[types.DefaultNetworkName]
+
+	for _, svcIP := range udnAllowedServicesIPs {
+		ipPrefix := "ip"
+		masqueradeSubnet := config.Gateway.V4MasqueradeSubnet
+		if !utilnet.IsIPv4(svcIP) {
+			ipPrefix = "ipv6"
+			masqueradeSubnet = config.Gateway.V6MasqueradeSubnet
+		}
+
+		// The flows added below have a higher priority than the default network service flows:
+		//   priority=500,ip,in_port=LOCAL,nw_dst=10.96.0.0/16 actions=ct(commit,table=2,zone=64001,nat(src=169.254.0.2))
+		//   priority=500,ip,in_port="patch-breth0_ov",nw_src=10.96.0.0/16,nw_dst=169.254.0.2 actions=ct(table=3,zone=64001,nat)
+		// This ordering ensures that there is no SNAT for UDN originated traffic.
+		// However, it also means that the flows match traffic with the source IP of the default masquerade IP (169.254.0.2) and a
+		// destination of a UDN allowed service. To handle this, the flow commits the connection to conntrack and applies NAT
+		// action in the reply direction to potentially unSNAT from 169.254.0.2.
+
+		// table 0, user-defined network host -> OVN towards default cluster network services
+		dftFlows = append(dftFlows,
+			fmt.Sprintf("cookie=%s, priority=600, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
+				"actions=ct(commit,zone=%d,table=2)",
+				defaultOpenFlowCookie, ofPortHost, ipPrefix, ipPrefix, masqueradeSubnet, ipPrefix, svcIP, config.Default.HostMasqConntrackZone))
+
+		// table 0, Reply hairpin traffic to host, coming from OVN
+		dftFlows = append(dftFlows,
+			fmt.Sprintf("cookie=%s, priority=600, in_port=%s, %s, %s_src=%s, %s_dst=%s,"+
+				"actions=ct(zone=%d,table=3,nat)",
+				defaultOpenFlowCookie, defaultNetConfig.ofPortPatch, ipPrefix, ipPrefix, svcIP, ipPrefix, masqueradeSubnet,
+				config.Default.HostMasqConntrackZone))
+	}
+
 	// table 2, dispatch from Host -> OVN
 	dftFlows = append(dftFlows,
 		fmt.Sprintf("cookie=%s, table=2, "+
@@ -1897,7 +1930,7 @@ func newSharedGateway(nodeName string, subnets []*net.IPNet, gwNextHops []net.IP
 			}
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, subnets, nodeIPs)
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, subnets, nodeIPs, watchFactory)
 		if err != nil {
 			return err
 		}
