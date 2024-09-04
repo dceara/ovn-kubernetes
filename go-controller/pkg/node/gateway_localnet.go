@@ -128,7 +128,7 @@ func newLocalGateway(nodeName string, hostSubnets []*net.IPNet, gwNextHops []net
 			return fmt.Errorf("failed to update masquerade subnet annotation on node: %s, error: %v", nodeName, err)
 		}
 
-		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, hostSubnets, gw.nodeIPManager.ListAddresses())
+		gw.openflowManager, err = newGatewayOpenFlowManager(gwBridge, exGwBridge, hostSubnets, gw.nodeIPManager.ListAddresses(), watchFactory)
 		if err != nil {
 			return err
 		}

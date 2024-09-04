@@ -8,6 +8,7 @@ import (
 
 	libovsdbclient "github.com/ovn-org/libovsdb/client"
 	"github.com/ovn-org/libovsdb/ovsdb"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
@@ -656,6 +657,84 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *kapi.Node, switch
 			if err != nil {
 				return nil, fmt.Errorf("error creating static route %+v on router %s: %v", lrsr, routerName, err)
 			}
+		}
+	}
+
+	// synchronize static routes for UDN enabled services in shared gateway mode
+	if util.IsNetworkSegmentationSupportEnabled() && config.Gateway.Mode == config.GatewayModeShared && bnc.IsPrimaryNetwork() {
+		servicesIPs, err := bnc.watchFactory.GetUDNAllowedServicesIPs()
+		if err != nil {
+			return nil, err
+		}
+
+		extIDs := map[string]string{
+			types.NetworkExternalID:           bnc.GetNetworkName(),
+			types.TopologyExternalID:          bnc.TopologyType(),
+			types.UDNEnabledServiceExternalID: "",
+		}
+
+		routesEqual := func(a, b *nbdb.LogicalRouterStaticRoute) bool {
+			for extIDKey, extIDVal := range a.ExternalIDs {
+				if val, ok := b.ExternalIDs[extIDKey]; !ok || val != extIDVal {
+					return false
+				}
+			}
+
+			return a.IPPrefix == b.IPPrefix &&
+				a.ExternalIDs[types.NetworkExternalID] == b.ExternalIDs[types.NetworkExternalID] &&
+				a.ExternalIDs[types.TopologyExternalID] == b.ExternalIDs[types.TopologyExternalID] &&
+				libovsdbops.PolicyEqualPredicate(a.Policy, b.Policy) &&
+				a.Nexthop == b.Nexthop
+
+		}
+
+		staticRoutes := make([]nbdb.LogicalRouterStaticRoute, 0, len(servicesIPs))
+		for _, svcIP := range servicesIPs {
+			mgmtIP, err := util.MatchFirstIPFamily(utilnet.IsIPv6(svcIP), mgmtPortIPs)
+			if err != nil {
+				return nil, err
+			}
+			staticRoutes = append(staticRoutes, nbdb.LogicalRouterStaticRoute{
+				Policy:      &nbdb.LogicalRouterStaticRoutePolicyDstIP,
+				IPPrefix:    svcIP.String(),
+				Nexthop:     mgmtIP.String(),
+				ExternalIDs: extIDs,
+			})
+		}
+
+		delPredicate := func(item *nbdb.LogicalRouterStaticRoute) bool {
+			// Ignore routes not from this network
+			for extIDKey, extIDVal := range extIDs {
+				if val, ok := item.ExternalIDs[extIDKey]; !ok || val != extIDVal {
+					return false
+				}
+			}
+
+			for _, route := range staticRoutes {
+				if routesEqual(item, &route) {
+					return false
+				}
+			}
+
+			klog.V(5).Infof("Removing stale %q route for %s network: %v", types.UDNEnabledServiceExternalID, bnc.GetNetworkName(), item)
+			return true
+		}
+
+		ops, err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicateOps(bnc.nbClient, nil, routerName, delPredicate)
+		if err != nil {
+			return nil, err
+		}
+		for _, route := range staticRoutes {
+			ops, err = libovsdbops.CreateOrUpdateLogicalRouterStaticRoutesWithPredicateOps(bnc.nbClient, ops, routerName, &route, func(item *nbdb.LogicalRouterStaticRoute) bool {
+				return routesEqual(item, &route)
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		_, err = libovsdbops.TransactAndCheck(bnc.nbClient, ops)
+		if err != nil {
+			return nil, err
 		}
 	}
 

@@ -597,7 +597,7 @@ func (gw *GatewayManager) GatewayInit(
 			// management port interface for the hostSubnet prefix before adding the routes
 			// towards join switch.
 			mgmtIfAddr := util.GetNodeManagementIfAddr(hostSubnet)
-			gw.staticRouteCleanup([]net.IP{mgmtIfAddr.IP})
+			gw.staticRouteCleanup([]net.IP{mgmtIfAddr.IP}, hostSubnet.String())
 
 			if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(
 				gw.nbClient,
@@ -610,10 +610,13 @@ func (gw *GatewayManager) GatewayInit(
 			}
 		} else if config.Gateway.Mode == config.GatewayModeLocal {
 			// If migrating from shared to local gateway, let's remove the static routes towards
-			// join switch for the hostSubnet prefix
+			// join switch for the hostSubnet prefix and any potential routes for UDN enabled services.
 			// Note syncManagementPort happens before gateway sync so only remove things pointing to join subnet
 			if gw.clusterRouterName != "" {
 				p := func(item *nbdb.LogicalRouterStaticRoute) bool {
+					if _, ok := item.ExternalIDs[types.UDNEnabledServiceExternalID]; ok {
+						return true
+					}
 					return item.IPPrefix == lrsr.IPPrefix && item.Policy != nil && *item.Policy == *lrsr.Policy &&
 						gw.containsJoinIP(net.ParseIP(item.Nexthop))
 				}
@@ -1034,7 +1037,7 @@ func (gw *GatewayManager) Cleanup() error {
 	for _, gwIPAddr := range gwIPAddrs {
 		nextHops = append(nextHops, gwIPAddr.IP)
 	}
-	gw.staticRouteCleanup(nextHops)
+	gw.staticRouteCleanup(nextHops, "")
 	gw.policyRouteCleanup(nextHops)
 
 	// Remove the patch port that connects join switch to gateway router
@@ -1102,7 +1105,7 @@ func (gw *GatewayManager) delPbrAndNatRules(nodeName string) {
 	gw.removeLRPolicies(nodeName)
 }
 
-func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP) {
+func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP, ipPrefix string) {
 	if len(nextHops) == 0 {
 		return // if we do not have next hops, we do not have any routes to cleanup
 	}
@@ -1116,6 +1119,9 @@ func (gw *GatewayManager) staticRouteCleanup(nextHops []net.IP) {
 			networkName = types.DefaultNetworkName
 		}
 		if networkName != gw.netInfo.GetNetworkName() {
+			return false
+		}
+		if ipPrefix != "" && item.IPPrefix != ipPrefix {
 			return false
 		}
 		return ips.Has(item.Nexthop)
