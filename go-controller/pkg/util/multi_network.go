@@ -15,6 +15,7 @@ import (
 	knet "k8s.io/utils/net"
 
 	nettypes "github.com/k8snetworkplumbingwg/network-attachment-definition-client/pkg/apis/k8s.cni.cncf.io/v1"
+
 	ovncnitypes "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/cni/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
@@ -57,6 +58,7 @@ type BasicNetInfo interface {
 	GetNetworkScopedExtPortName(bridgeID, nodeName string) string
 	GetNetworkScopedLoadBalancerName(lbName string) string
 	GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string
+	GetNetworkScopedClusterSubnetSNATMatch(nodeName string) string
 }
 
 // NetInfo correlates which NADs refer to a network in addition to the basic
@@ -146,6 +148,10 @@ func (nInfo *DefaultNetInfo) GetNetworkScopedLoadBalancerName(lbName string) str
 
 func (nInfo *DefaultNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string {
 	return nInfo.GetNetworkScopedName(lbGroupName)
+}
+
+func (nInfo *DefaultNetInfo) GetNetworkScopedClusterSubnetSNATMatch(nodeName string) string {
+	return ""
 }
 
 // GetNADs returns the NADs associated with the network, no op for default
@@ -328,6 +334,10 @@ func (nInfo *secondaryNetInfo) GetNetworkScopedGWRouterName(nodeName string) str
 }
 
 func (nInfo *secondaryNetInfo) GetNetworkScopedSwitchName(nodeName string) string {
+	// In Layer2Topology there is just one global switch
+	if nInfo.TopologyType() == types.Layer2Topology {
+		return fmt.Sprintf("%s%s", nInfo.getPrefix(), types.OVNLayer2Switch)
+	}
 	return nInfo.GetNetworkScopedName(nodeName)
 }
 
@@ -353,6 +363,13 @@ func (nInfo *secondaryNetInfo) GetNetworkScopedLoadBalancerName(lbName string) s
 
 func (nInfo *secondaryNetInfo) GetNetworkScopedLoadBalancerGroupName(lbGroupName string) string {
 	return nInfo.GetNetworkScopedName(lbGroupName)
+}
+
+func (nInfo *secondaryNetInfo) GetNetworkScopedClusterSubnetSNATMatch(nodeName string) string {
+	if nInfo.TopologyType() != types.Layer2Topology {
+		return ""
+	}
+	return fmt.Sprintf("outport == %q", types.GWRouterToExtSwitchPrefix+nInfo.GetNetworkScopedGWRouterName(nodeName))
 }
 
 // getPrefix returns if the logical entities prefix for this network

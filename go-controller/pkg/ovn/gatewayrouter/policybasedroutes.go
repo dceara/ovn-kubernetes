@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	utilnet "k8s.io/utils/net"
 
@@ -31,7 +32,7 @@ func NewPolicyBasedRoutesManager(nbClient client.Client, clusterRouterName strin
 	}
 }
 
-func (pbr *PolicyBasedRoutesManager) Add(nodeName, mgmtPortIP string, hostIfCIDR *net.IPNet, otherHostAddrs []string) error {
+func (pbr *PolicyBasedRoutesManager) AddSameNodeIPPolicy(nodeName, mgmtPortIP string, hostIfCIDR *net.IPNet, otherHostAddrs []string) error {
 	if hostIfCIDR == nil {
 		return fmt.Errorf("<nil> host interface CIDR")
 	}
@@ -44,13 +45,13 @@ func (pbr *PolicyBasedRoutesManager) Add(nodeName, mgmtPortIP string, hostIfCIDR
 	if !isHostIPsValid(otherHostAddrs) {
 		return fmt.Errorf("invalid other host address(es): %v", otherHostAddrs)
 	}
-	l3Prefix := getIPPrefix(hostIfCIDR.IP)
+	l3Prefix := getIPCIDRPrefix(hostIfCIDR)
 	matches := sets.New[string]()
 	for _, hostIP := range append(otherHostAddrs, hostIfCIDR.IP.String()) {
 		// embed nodeName as comment so that it is easier to delete these rules later on.
 		// logical router policy doesn't support external_ids to stash metadata
 		networkScopedSwitchName := pbr.netInfo.GetNetworkScopedSwitchName(nodeName)
-		matchStr := generateMatch(networkScopedSwitchName, l3Prefix, hostIP)
+		matchStr := generateNodeIPMatch(networkScopedSwitchName, l3Prefix, hostIP)
 		matches = matches.Insert(matchStr)
 	}
 
@@ -61,6 +62,41 @@ func (pbr *PolicyBasedRoutesManager) Add(nodeName, mgmtPortIP string, hostIfCIDR
 		mgmtPortIP,
 	); err != nil {
 		return fmt.Errorf("unable to sync node subnet policies, err: %v", err)
+	}
+
+	return nil
+}
+
+// AddHostCIDRPolicy adds the following policy in local-gateway-mode for L2 topology
+// 2000  ip4.dst==172.18.0.0/16   reroute    10.128.0.2
+// Since rtoe of GR is directly connected to the hostCIDR range in LGW even with the
+// reroute to mp0 src-ip route the dst-ip based default OVN route takes precedence and
+// sends this to rtoe. Hence we need a LRP to override this.
+func (pbr *PolicyBasedRoutesManager) AddHostCIDRPolicy(node *v1.Node, mgmtPortIP string) error {
+	if mgmtPortIP == "" || net.ParseIP(mgmtPortIP) == nil {
+		return fmt.Errorf("invalid management port IP address: %q", mgmtPortIP)
+	}
+	// we only care about the primary node family since GR's port has that IP
+	// we don't care about secondary nodeIPs here which is why we are not using
+	// the hostCIDR annotation
+	primaryIfAddrs, err := util.GetNodeIfAddrAnnotation(node)
+	if err != nil {
+		return fmt.Errorf("failed to get primaryIP for node %s, err: %v", node.Name, err)
+	}
+	l3Prefix := primaryIfAddrs.IPv4
+	if utilnet.IsIPv6String(mgmtPortIP) {
+		l3Prefix = primaryIfAddrs.IPv6
+	}
+	_, l3PrefixCIDR, err := net.ParseCIDR(l3Prefix)
+	if l3Prefix == "" || err != nil || l3PrefixCIDR == nil {
+		return fmt.Errorf("invalid host CIDR prefix: prefixString: %q, prefixCIDR: %q, error: %v",
+			l3Prefix, l3PrefixCIDR, err)
+	}
+	ovnPrefix := getIPCIDRPrefix(l3PrefixCIDR)
+	matchStr := generateHostCIDRMatch(ovnPrefix, l3PrefixCIDR.String())
+	if err := pbr.createPolicyBasedRoutes(matchStr, ovntypes.UDNHostCIDRPolicyPriority, mgmtPortIP); err != nil {
+		return fmt.Errorf("failed to add host-cidr policy route '%s' on host %q on %s "+
+			"error: %v", matchStr, node.Name, pbr.clusterRouterName, err)
 	}
 
 	return nil
@@ -218,12 +254,16 @@ func (pbr *PolicyBasedRoutesManager) createPolicyBasedRoutes(match, priority, ne
 	return nil
 }
 
-func generateMatch(switchName, ipPrefix, hostIP string) string {
+func generateNodeIPMatch(switchName, ipPrefix, hostIP string) string {
 	return fmt.Sprintf(`inport == "%s%s" && %s.dst == %s /* %s */`, ovntypes.RouterToSwitchPrefix, switchName, ipPrefix, hostIP, switchName)
 }
 
-func getIPPrefix(ip net.IP) string {
-	if utilnet.IsIPv6(ip) {
+func generateHostCIDRMatch(ipPrefix, l3Prefix string) string {
+	return fmt.Sprintf(`%s.dst == %s`, ipPrefix, l3Prefix)
+}
+
+func getIPCIDRPrefix(cidr *net.IPNet) string {
+	if utilnet.IsIPv6CIDR(cidr) {
 		return "ip6"
 	}
 	return "ip4"

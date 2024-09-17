@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mnpapi "github.com/k8snetworkplumbingwg/multi-networkpolicy/pkg/apis/k8s.cni.cncf.io/v1beta1"
+
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -268,7 +269,7 @@ func (oc *SecondaryLocalnetNetworkController) Cleanup() error {
 func (oc *SecondaryLocalnetNetworkController) Init() error {
 	switchName := oc.GetNetworkScopedSwitchName(types.OVNLocalnetSwitch)
 
-	logicalSwitch, err := oc.initializeLogicalSwitch(switchName, oc.Subnets(), oc.ExcludeSubnets())
+	logicalSwitch, err := oc.initializeLogicalSwitch(switchName, oc.Subnets(), oc.ExcludeSubnets(), "", "")
 	if err != nil {
 		return err
 	}
