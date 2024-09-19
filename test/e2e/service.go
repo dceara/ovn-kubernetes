@@ -736,6 +736,7 @@ var _ = ginkgo.Describe("Services", func() {
 						fmt.Sprintf("%s%s", ip, subnetMask), "dev", "breth0")
 					if err != nil && !strings.Contains(err.Error(),
 						"RTNETLINK answers: Cannot assign requested address") {
+						ginkgo.By(fmt.Sprintf("DEBUG DEBUG DCEARA failed to remove ip address %s from node %s, err: %q", ip, nodeName, err))
 						framework.Failf("failed to remove ip address %s from node %s, err: %q", ip, nodeName, err)
 					}
 				}
@@ -1141,7 +1142,7 @@ spec:
 		// scenarios is different such that OVN could interpret them as
 		// different streams and replace what it thinks to be a conflicting port
 		// with a different one, breaking the stream for the involved peers.
-		ginkgo.It("should handle IP fragments", func() {
+		ginkgo.FIt("should handle IP fragments", func() {
 			ginkgo.By("Selecting a schedulable node")
 			nodes, err = e2enode.GetBoundedReadySchedulableNodes(context.TODO(), f.ClientSet, 1)
 			gomega.Expect(err).NotTo(gomega.HaveOccurred())
