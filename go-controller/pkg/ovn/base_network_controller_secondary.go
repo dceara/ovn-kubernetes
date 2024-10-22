@@ -639,7 +639,6 @@ func (bsnc *BaseSecondaryNetworkController) syncPodsForSecondaryNetwork(pods []i
 
 // addPodToNamespaceForSecondaryNetwork returns the ops needed to add pod's IP to the namespace's address set.
 func (bsnc *BaseSecondaryNetworkController) addPodToNamespaceForSecondaryNetwork(ns string, ips []*net.IPNet, portUUID string) ([]ovsdb.Operation, error) {
-	var ops []ovsdb.Operation
 	var err error
 	nsInfo, nsUnlock, err := bsnc.ensureNamespaceLockedForSecondaryNetwork(ns, true, nil)
 	if err != nil {
@@ -648,17 +647,7 @@ func (bsnc *BaseSecondaryNetworkController) addPodToNamespaceForSecondaryNetwork
 
 	defer nsUnlock()
 
-	if ops, err = nsInfo.addressSet.AddAddressesReturnOps(util.IPNetsIPToStringSlice(ips)); err != nil {
-		return nil, err
-	}
-
-	if portUUID != "" && nsInfo.portGroupName != "" {
-		if ops, err = libovsdbops.AddPortsToPortGroupOps(bsnc.nbClient, ops, nsInfo.portGroupName, portUUID); err != nil {
-			return nil, err
-		}
-	}
-
-	return ops, nil
+	return bsnc.addLocalPodToNamespaceLocked(nsInfo, ips, portUUID)
 }
 
 // AddNamespaceForSecondaryNetwork creates corresponding addressset in ovn db for secondary network
