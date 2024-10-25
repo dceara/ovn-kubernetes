@@ -11,10 +11,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ovn-ci-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
-
 env:
   GO_VERSION: 1.22.0
   K8S_VERSION: v1.31.0
