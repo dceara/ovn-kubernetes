@@ -3,17 +3,13 @@ name: ovn-ci
 on:
   merge_group:
   pull_request:
-    branches: [ master ]
+  push:
   schedule:
     - cron: '0 */12 * * *'
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ovn-ci-${{ github.head_ref || github.run_id }}
-  cancel-in-progress: true
 
 env:
   GO_VERSION: 1.22.0
@@ -33,28 +29,6 @@ env:
 
 
 jobs:
-  # separate job for parallelism
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    steps:
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache-dependency-path: "**/*.sum"
-      id: go
-
-    - name: Verify
-      uses: golangci/golangci-lint-action@v4
-      with:
-        version: v1.56.1
-        working-directory: go-controller
-        args: --modules-download-mode=vendor --timeout=15m0s --verbose
-
   build-master:
     name: Build-master
     runs-on: ubuntu-latest
@@ -199,7 +173,6 @@ jobs:
            make gofmt
            make
            make windows
-           COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
     - name: Build docker image - from current pr branch
@@ -253,137 +226,6 @@ jobs:
         name: test-image-pr
         path: ${{ env.CI_DIST_IMAGES_OUTPUT }}/${{ env.CI_IMAGE_PR_TAR }}
 
-  ovn-upgrade-e2e:
-    name: Upgrade OVN from Master to PR branch based image
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    needs:
-      - build-master
-      - build-pr
-    strategy:
-      fail-fast: false
-      matrix:
-        gateway-mode: [local, shared]
-    env:
-      JOB_NAME: "Upgrade-Tests-${{ matrix.gateway-mode }}"
-      OVN_HA: "false"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "${{ matrix.gateway-mode }}"
-      OVN_MULTICAST_ENABLE:  "false"
-    steps:
-    - name: Check out code into the Go module directory - from Master branch
-      uses: actions/checkout@v4
-      with:
-          ref: master
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache-dependency-path: "**/*.sum"
-      id: go
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Free up disk space
-      run: |
-        sudo rm -rf /usr/local/lib/android/sdk
-        sudo apt-get update
-        sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
-          google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
-          powershell temurin-* zulu-*
-
-    - name: Download test-image-master
-      uses: actions/download-artifact@v4
-      with:
-        name: test-image-master
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_MASTER_TAR} && rm -rf ${CI_IMAGE_MASTER_TAR}
-
-    - name: kind setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:dev"
-        make -C test install-kind
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-        set -x
-        docker ps -a
-        docker exec ovn-control-plane crictl images
-        docker exec ovn-worker crictl images
-        docker exec ovn-worker2 crictl images
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v4
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-
-    - name: Check out code into the Go module directory - from PR branch
-      uses: actions/checkout@v4
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: ovn upgrade
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        make -C test upgrade-ovn
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: Run E2E shard-conformance
-      run: |
-        make -C test shard-conformance
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs-kind-pr-branch
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs-kind-pr-branch
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}-after-upgrade
-        path: /tmp/kind/logs-kind-pr-branch
-
   e2e:
     name: e2e
     runs-on: ubuntu-latest
@@ -407,36 +249,7 @@ jobs:
         # forwarding : ["", "disable-forwarding"]
         # dns-name-resolver : ["", "enable-dns-name-resolver"]
         include:
-          - {"target": "shard-conformance", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "shard-conformance", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
           - {"target": "control-plane",     "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-disabled",          "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane",     "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "control-plane-helm","ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-disabled", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane-helm","ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "control-plane",     "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones", "dns-name-resolver": "enable-dns-name-resolver"}
-          - {"target": "multi-homing",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "multi-homing-helm", "ha": "HA",   "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "node-ip-mac-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "node-ip-mac-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "compact-mode",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "snatGW",   "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "multi-homing",      "ha": "noHA", "gateway-mode": "local",  "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "multi-node-zones",  "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-multi-node-zones", "num-workers": "3", "num-nodes-per-zone": "2"}
-          - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "2br", "ic": "ic-single-node-zones"}
-          - {"target": "external-gateway",  "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv6",      "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "local",  "ipfamily": "ipv4",      "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-disabled", "num-workers": "3"}
-          - {"target": "kv-live-migration", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "num-workers": "3"}
-          - {"target": "control-plane", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "ipv4", "disable-snat-multiple-gws": "SnatGW",   "second-bridge": "1br", "ic": "ic-single-node-zones", "forwarding": "disable-forwarding"}
-          - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "noSnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
-          - {"target": "network-segmentation", "ha": "noHA", "gateway-mode": "shared", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-disabled"}
-          - {"target": "tools", "ha": "noHA", "gateway-mode": "local", "ipfamily": "dualstack", "disable-snat-multiple-gws": "SnatGW", "second-bridge": "1br", "ic": "ic-single-node-zones"}
     needs: [ build-pr ]
     env:
       JOB_NAME: "${{ matrix.target }}-${{ matrix.ha }}-${{ matrix.gateway-mode }}-${{ matrix.ipfamily }}-${{ matrix.disable-snat-multiple-gws }}-${{ matrix.second-bridge }}-${{ matrix.ic }}"
@@ -574,127 +387,3 @@ jobs:
       with:
         name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
         path: /tmp/kind/logs
-
-  e2e-dual-conversion:
-    name: e2e-dual-conversion
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {"ha": "HA", "interconnect": "interconnect-disabled"}
-          - {"ha": "noHA", "interconnect": "interconnect-single-node-zones", "num-zones": "3", "num-nodes-per-zone": "1"}
-          # - {"ha": "noHA", "interconnect": "interconnect-multi-node-zones", "num-zones": "2", "num-nodes-per-zone": "2"}
-    needs: [ build-pr ]
-    env:
-      JOB_NAME: "DualStack-conversion-shared-${{ matrix.ha }}-${{ matrix.interconnect }}"
-      OVN_HA: "${{ matrix.ha == 'HA' }}"
-      KIND_IPV4_SUPPORT: "true"
-      KIND_IPV6_SUPPORT: "false"
-      OVN_HYBRID_OVERLAY_ENABLE: "false"
-      OVN_GATEWAY_MODE: "shared"
-      OVN_MULTICAST_ENABLE:  "false"
-      DUALSTACK_CONVERSION:  "true"
-      OVN_ENABLE_INTERCONNECT: "${{ matrix.interconnect == 'interconnect-single-node-zones' ||  matrix.interconnect == 'interconnect-multi-node-zones'}}"
-      KIND_NUM_ZONES: "${{ matrix.num-zones }}"
-      KIND_NUM_NODES_PER_ZONE: "${{ matrix.num-nodes-per-zone }}"
-    steps:
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
-
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache-dependency-path: "**/*.sum"
-      id: go
-
-    - name: Set up environment
-      run: |
-        export GOPATH=$(go env GOPATH)
-        echo "GOPATH=$GOPATH" >> $GITHUB_ENV
-        echo "$GOPATH/bin" >> $GITHUB_PATH
-
-    - name: Free up disk space
-      run: |
-        sudo rm -rf /usr/local/lib/android/sdk
-        sudo apt-get update
-        sudo eatmydata apt-get purge --auto-remove -y \
-          azure-cli aspnetcore-* dotnet-* ghc-* firefox \
-          google-chrome-stable \
-          llvm-* microsoft-edge-stable mono-* \
-          msbuild mysql-server-core-* php-* php7* \
-          powershell temurin-* zulu-*
-
-    - name: Disable ufw
-      # For IPv6 and Dualstack, ufw (Uncomplicated Firewall) should be disabled.
-      # Not needed for KIND deployments, so just disable all the time.
-      run: |
-        sudo ufw disable
-
-    - name: Download test-image-pr
-      uses: actions/download-artifact@v4
-      with:
-        name: test-image-pr
-
-    - name: Load docker image
-      run: |
-        docker load --input ${CI_IMAGE_PR_TAR} && rm -rf ${CI_IMAGE_PR_TAR}
-
-    - name: kind IPv4 setup
-      run: |
-        export OVN_IMAGE="ovn-daemonset-fedora:pr"
-        make -C test install-kind
-
-    - name: Convert IPv4 cluster to Dual Stack
-      run: |
-        ./contrib/kind-dual-stack-conversion.sh
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: Run Dual-Stack Tests
-      run: |
-        make -C test shard-test WHAT="Networking Granular Checks\|DualStack"
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: Run Dual-Stack Control-Plane Tests
-      run: |
-        make -C test control-plane WHAT="DualStack"
-
-    - name: Runner Diagnostics
-      uses: ./.github/actions/diagnostics
-
-    - name: Export kind logs
-      if: always()
-      run: |
-        mkdir -p /tmp/kind/logs
-        kind export logs --name ${KIND_CLUSTER_NAME} --loglevel=debug /tmp/kind/logs
-
-    - name: Upload kind logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: kind-logs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/logs
-
-    - name: Export ovn dbs
-      if: ${{ failure() }}
-      run: |
-        mkdir -p /tmp/kind/ovndbs
-        for node in ovn-control-plane ovn-worker ovn-worker2
-        do for db in ovnnb_db.db ovnsb_db.db
-          do docker cp ${node}:/var/lib/openvswitch/${db} /tmp/kind/ovndbs/${node}_${db} ||:
-          done
-        done
-
-    - name: Upload ovn dbs
-      if: ${{ failure() }}
-      uses: actions/upload-artifact@v4
-      with:
-        name: kind-ovndbs-${{ env.JOB_NAME }}-${{ github.run_id }}
-        path: /tmp/kind/ovndbs

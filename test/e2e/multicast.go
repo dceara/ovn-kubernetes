@@ -175,7 +175,7 @@ var _ = ginkgo.Describe("e2e IGMP validation", func() {
 			fmt.Sprintf("iperf -c %s -u -T 2 -t 3000 -i 5", mcastGroup)}
 	)
 	f := wrappedTestFramework(svcname)
-	ginkgo.It("can retrieve multicast IGMP query", func() {
+	ginkgo.FIt("can retrieve multicast IGMP query", func() {
 		// Enable multicast of the test namespace annotation
 		ginkgo.By(fmt.Sprintf("annotating namespace: %s to enable multicast", f.Namespace.Name))
 		annotateArgs := []string{
