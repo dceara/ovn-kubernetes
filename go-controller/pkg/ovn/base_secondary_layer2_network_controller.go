@@ -162,19 +162,19 @@ func (oc *BaseSecondaryLayer2NetworkController) initializeLogicalSwitch(switchNa
 	return &logicalSwitch, nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateNodeEvent(node *corev1.Node) error {
-	if oc.isLocalZoneNode(node) {
-		return oc.addUpdateLocalNodeEvent(node)
+func (oc *BaseSecondaryLayer2NetworkController) addUpdateNodeEvent(ne *util.NodeExtra) error {
+	if ne.IsLocalZoneNodeInfo(oc.zone) {
+		return oc.addUpdateLocalNodeEvent(ne)
 	}
-	return oc.addUpdateRemoteNodeEvent(node)
+	return oc.addUpdateRemoteNodeEvent(ne)
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.LoadOrStore(node.Name, true)
+func (oc *BaseSecondaryLayer2NetworkController) addUpdateLocalNodeEvent(ne *util.NodeExtra) error {
+	_, present := oc.localZoneNodes.LoadOrStore(ne.Node.Name, true)
 
 	if !present {
 		// process all pods so they are reconfigured as local
-		errs := oc.addAllPodsOnNode(node.Name)
+		errs := oc.addAllPodsOnNode(ne.Node.Name)
 		if errs != nil {
 			err := utilerrors.Join(errs...)
 			return err
@@ -184,17 +184,17 @@ func (oc *BaseSecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *co
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(node *corev1.Node) error {
-	_, present := oc.localZoneNodes.Load(node.Name)
+func (oc *BaseSecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(ne *util.NodeExtra) error {
+	_, present := oc.localZoneNodes.Load(ne.Node.Name)
 
 	if present {
-		err := oc.deleteNodeEvent(node)
+		err := oc.deleteNodeEvent(ne)
 		if err != nil {
 			return err
 		}
 
 		// process all pods so they are reconfigured as remote
-		errs := oc.addAllPodsOnNode(node.Name)
+		errs := oc.addAllPodsOnNode(ne.Node.Name)
 		if errs != nil {
 			err = utilerrors.Join(errs...)
 			return err
@@ -204,8 +204,8 @@ func (oc *BaseSecondaryLayer2NetworkController) addUpdateRemoteNodeEvent(node *c
 	return nil
 }
 
-func (oc *BaseSecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) error {
-	oc.localZoneNodes.Delete(node.Name)
+func (oc *BaseSecondaryLayer2NetworkController) deleteNodeEvent(ne *util.NodeExtra) error {
+	oc.localZoneNodes.Delete(ne.Node.Name)
 	return nil
 }
 

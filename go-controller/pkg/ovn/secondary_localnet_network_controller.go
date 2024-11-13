@@ -23,7 +23,6 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/util"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -95,12 +94,12 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) IsResourceScheduled(obj
 // Given an object to add and a boolean specifying if the function was executed from iterateRetryResources
 func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interface{}, fromRetryLoop bool) error {
 	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
+	case factory.NodeParsedType:
+		ne, ok := obj.(*util.NodeExtra)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", obj)
+			return fmt.Errorf("invalid object (add), expected NodeExtra: %v", obj)
 		}
-		return h.oc.addUpdateNodeEvent(node)
+		return h.oc.addUpdateNodeEvent(ne)
 	default:
 		return h.oc.AddSecondaryNetworkResourceCommon(h.objType, obj)
 	}
@@ -112,12 +111,12 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) AddResource(obj interfa
 // is in the retryCache or not.
 func (h *secondaryLocalnetNetworkControllerEventHandler) UpdateResource(oldObj, newObj interface{}, inRetryCache bool) error {
 	switch h.objType {
-	case factory.NodeType:
-		node, ok := newObj.(*corev1.Node)
+	case factory.NodeParsedType:
+		new, ok := newObj.(*util.NodeExtra)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", newObj)
+			return fmt.Errorf("invalid object (update), expected NodeExtra: %v", newObj)
 		}
-		return h.oc.addUpdateNodeEvent(node)
+		return h.oc.addUpdateNodeEvent(new)
 	default:
 		return h.oc.UpdateSecondaryNetworkResourceCommon(h.objType, oldObj, newObj, inRetryCache)
 	}
@@ -128,12 +127,12 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) UpdateResource(oldObj, 
 // used for now for pods and network policies.
 func (h *secondaryLocalnetNetworkControllerEventHandler) DeleteResource(obj, cachedObj interface{}) error {
 	switch h.objType {
-	case factory.NodeType:
-		node, ok := obj.(*corev1.Node)
+	case factory.NodeParsedType:
+		ne, ok := obj.(*util.NodeExtra)
 		if !ok {
-			return fmt.Errorf("could not cast %T object to Node", obj)
+			return fmt.Errorf("invalid object (del), expected NodeExtra: %v", obj)
 		}
-		return h.oc.deleteNodeEvent(node)
+		return h.oc.deleteNodeEvent(ne)
 	default:
 		return h.oc.DeleteSecondaryNetworkResourceCommon(h.objType, obj, cachedObj)
 	}
@@ -147,7 +146,7 @@ func (h *secondaryLocalnetNetworkControllerEventHandler) SyncFunc(objs []interfa
 		syncFunc = h.syncFunc
 	} else {
 		switch h.objType {
-		case factory.NodeType:
+		case factory.NodeParsedType:
 			syncFunc = h.oc.syncNodes
 
 		case factory.PodType:
@@ -310,7 +309,7 @@ func (oc *SecondaryLocalnetNetworkController) Stop() {
 }
 
 func (oc *SecondaryLocalnetNetworkController) initRetryFramework() {
-	oc.retryNodes = oc.newRetryFramework(factory.NodeType)
+	oc.retryNodes = oc.newRetryFramework(factory.NodeParsedType)
 	oc.retryPods = oc.newRetryFramework(factory.PodType)
 	if oc.allocatesPodAnnotation() && oc.NetInfo.AllowsPersistentIPs() {
 		oc.retryIPAMClaims = oc.newRetryFramework(factory.IPAMClaimsType)
