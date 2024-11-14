@@ -194,6 +194,7 @@ var (
 	EndpointSliceForStaleConntrackRemovalType reflect.Type = reflect.TypeOf(&endpointSliceForStaleConntrackRemoval{})
 	ServiceForGatewayType                     reflect.Type = reflect.TypeOf(&serviceForGateway{})
 	EndpointSliceForGatewayType               reflect.Type = reflect.TypeOf(&endpointSliceForGateway{})
+	NodeParsedType                            reflect.Type = reflect.TypeOf(&nodeParsed{})
 	ServiceForFakeNodePortWatcherType         reflect.Type = reflect.TypeOf(&serviceForFakeNodePortWatcher{}) // only for unit tests
 )
 
@@ -336,6 +337,11 @@ func NewOVNKubeControllerWatchFactory(ovnClientset *util.OVNKubeControllerClient
 		return nil, err
 	}
 	wf.informers[NodeType], err = newQueuedInformer(NodeType, objTransformerConfig, wf.iFactory.Core().V1().Nodes().Informer(), wf.stopChan,
+		defaultNumEventQueues)
+	if err != nil {
+		return nil, err
+	}
+	wf.informers[NodeParsedType], err = newQueuedInformer(NodeParsedType, objTransformerConfig, wf.iFactory.Core().V1().Nodes().Informer(), wf.stopChan,
 		defaultNumEventQueues)
 	if err != nil {
 		return nil, err
@@ -929,7 +935,7 @@ func getObjectMeta(objType reflect.Type, obj interface{}) (*metav1.ObjectMeta, e
 		if namespace, ok := obj.(*kapi.Namespace); ok {
 			return &namespace.ObjectMeta, nil
 		}
-	case NodeType:
+	case NodeType, NodeParsedType:
 		if node, ok := obj.(*kapi.Node); ok {
 			return &node.ObjectMeta, nil
 		}
@@ -1023,6 +1029,12 @@ func (wf *WatchFactory) GetResourceHandlerFunc(objType reflect.Type) (AddHandler
 		return func(namespace string, sel labels.Selector,
 			funcs cache.ResourceEventHandler, processExisting func([]interface{}) error) (*Handler, error) {
 			return wf.AddNodeHandler(funcs, processExisting, priority)
+		}, nil
+
+	case NodeParsedType:
+		return func(namespace string, sel labels.Selector,
+			funcs cache.ResourceEventHandler, processExisting func([]interface{}) error) (*Handler, error) {
+			return wf.AddNodeParsedHandler(funcs, processExisting, priority)
 		}, nil
 
 	case ServiceForGatewayType, ServiceForFakeNodePortWatcherType:
@@ -1287,6 +1299,10 @@ func (wf *WatchFactory) AddNodeHandler(handlerFuncs cache.ResourceEventHandler, 
 	return wf.addHandler(NodeType, "", nil, handlerFuncs, processExisting, priority)
 }
 
+func (wf *WatchFactory) AddNodeParsedHandler(handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{}) error, priority int) (*Handler, error) {
+	return wf.addHandler(NodeParsedType, "", nil, handlerFuncs, processExisting, priority)
+}
+
 // AddFilteredNodeHandler dds a handler function that will be executed when Node objects that match the given label selector
 func (wf *WatchFactory) AddFilteredNodeHandler(sel labels.Selector, handlerFuncs cache.ResourceEventHandler, processExisting func([]interface{}) error) (*Handler, error) {
 	return wf.addHandler(NodeType, "", sel, handlerFuncs, processExisting, defaultHandlerPriority)
@@ -1295,6 +1311,10 @@ func (wf *WatchFactory) AddFilteredNodeHandler(sel labels.Selector, handlerFuncs
 // RemoveNodeHandler removes a Node object event handler function
 func (wf *WatchFactory) RemoveNodeHandler(handler *Handler) {
 	wf.removeHandler(NodeType, handler)
+}
+
+func (wf *WatchFactory) RemoveNodeParsedHandler(handler *Handler) {
+	wf.removeHandler(NodeParsedType, handler)
 }
 
 // GetPod returns the pod spec given the namespace and pod name
@@ -1458,6 +1478,16 @@ func (wf *WatchFactory) CertificateSigningRequestInformer() certificatesinformer
 func (wf *WatchFactory) GetIPAMClaim(namespace, name string) (*ipamclaimsapi.IPAMClaim, error) {
 	ipamClaimsLister := wf.informers[IPAMClaimsType].lister.(ipamclaimslister.IPAMClaimLister)
 	return ipamClaimsLister.IPAMClaims(namespace).Get(name)
+}
+
+// GetNodeParsed gets a specific node augmented according to the informer transformer.
+func (wf *WatchFactory) GetNodeParsed(name string) (interface{}, error) {
+	nodeLister := wf.informers[NodeType].lister.(listers.NodeLister)
+	if node, err := nodeLister.Get(name); err != nil {
+		return nil, err
+	} else {
+		return wf.informers[NodeParsedType].transformer.Get(node.GetUID())
+	}
 }
 
 // GetNAD gets a specific NAD by the namespace/name

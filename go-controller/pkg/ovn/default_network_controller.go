@@ -1115,3 +1115,7 @@ func (h *defaultNetworkControllerEventHandler) SyncFunc(objs []interface{}) erro
 func (h *defaultNetworkControllerEventHandler) IsObjectInTerminalState(obj interface{}) bool {
 	return h.baseHandler.isObjectInTerminalState(h.objType, obj)
 }
+
+func (h *defaultNetworkControllerEventHandler) UnpackResource(obj interface{}) interface{} {
+	return h.baseHandler.unpackResource(h.objType, obj)
+}

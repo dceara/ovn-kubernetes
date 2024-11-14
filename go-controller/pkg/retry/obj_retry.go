@@ -52,6 +52,7 @@ type EventHandler interface {
 	GetInternalCacheEntry(obj interface{}) interface{}
 	IsResourceScheduled(obj interface{}) bool
 	IsObjectInTerminalState(obj interface{}) bool
+	UnpackResource(obj interface{}) interface{}
 
 	// functions related to metrics and events
 	RecordAddEvent(obj interface{})
@@ -76,6 +77,8 @@ func (h *DefaultEventHandler) GetInternalCacheEntry(obj interface{}) interface{}
 func (h *DefaultEventHandler) IsResourceScheduled(obj interface{}) bool { return true }
 
 func (h *DefaultEventHandler) IsObjectInTerminalState(obj interface{}) bool { return false }
+
+func (h *DefaultEventHandler) UnpackResource(obj interface{}) interface{} { return obj }
 
 func (h *DefaultEventHandler) RecordAddEvent(obj interface{}) {}
 
@@ -188,7 +191,7 @@ func (r *RetryFramework) InitRetryObjWithDelete(obj interface{}, lockedKey strin
 // AddRetryObjWithAddNoBackoff adds an object to be retried immediately for add.
 // It will lock the key, create or update retryObject, and unlock the key
 func (r *RetryFramework) AddRetryObjWithAddNoBackoff(obj interface{}) error {
-	key, err := GetResourceKey(obj)
+	key, err := r.getResourceKey(obj)
 	if err != nil {
 		return fmt.Errorf("could not get the key of %s %v: %v", r.ResourceHandler.ObjType, obj, err)
 	}
@@ -234,6 +237,10 @@ func (r *RetryFramework) RequestRetryObjs() {
 	default:
 		klog.V(5).Infof("Iterate retry objects already requested (resource %s)", r.ResourceHandler.ObjType)
 	}
+}
+
+func (r *RetryFramework) getResourceKey(obj interface{}) (string, error) {
+	return GetResourceKey(r.ResourceHandler.UnpackResource(obj))
 }
 
 // Given an object and its type, it returns the key for this object and an error if the key retrieval failed.
@@ -494,7 +501,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 			AddFunc: func(obj interface{}) {
 				r.ResourceHandler.RecordAddEvent(obj)
 
-				key, err := GetResourceKey(obj)
+				key, err := r.getResourceKey(obj)
 				if err != nil {
 					klog.Errorf("Upon add event: %v", err)
 					return
@@ -560,13 +567,13 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 				r.ResourceHandler.RecordUpdateEvent(newer)
 
 				// get the object keys for newer and old (expected to be the same)
-				newKey, err := GetResourceKey(newer)
+				newKey, err := r.getResourceKey(newer)
 				if err != nil {
 					klog.Errorf("Update of %s failed when looking up key of new obj: %v",
 						r.ResourceHandler.ObjType, err)
 					return
 				}
-				oldKey, err := GetResourceKey(old)
+				oldKey, err := r.getResourceKey(old)
 				if err != nil {
 					klog.Errorf("Update of %s failed when looking up key of old obj: %v",
 						r.ResourceHandler.ObjType, err)
@@ -705,7 +712,7 @@ func (r *RetryFramework) WatchResourceFiltered(namespaceForFilteredHandler strin
 			},
 			DeleteFunc: func(obj interface{}) {
 				r.ResourceHandler.RecordDeleteEvent(obj)
-				key, err := GetResourceKey(obj)
+				key, err := r.getResourceKey(obj)
 				if err != nil {
 					klog.Errorf("Delete of %s failed: %v", r.ResourceHandler.ObjType, err)
 					return

@@ -272,6 +272,10 @@ func (h *secondaryLayer3NetworkControllerEventHandler) IsObjectInTerminalState(o
 	return h.baseHandler.isObjectInTerminalState(h.objType, obj)
 }
 
+func (h *secondaryLayer3NetworkControllerEventHandler) UnpackResource(obj interface{}) interface{} {
+	return h.baseHandler.unpackResource(h.objType, obj)
+}
+
 // SecondaryLayer3NetworkController is created for logical network infrastructure and policy
 // for a secondary l3 network
 type SecondaryLayer3NetworkController struct {

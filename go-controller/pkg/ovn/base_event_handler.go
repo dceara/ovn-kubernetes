@@ -32,7 +32,8 @@ func hasResourceAnUpdateFunc(objType reflect.Type) bool {
 		factory.EgressNodeType,
 		factory.NamespaceType,
 		factory.MultiNetworkPolicyType,
-		factory.IPAMClaimsType:
+		factory.IPAMClaimsType,
+		factory.NodeParsedType:
 		return true
 	}
 	return false
@@ -65,6 +66,26 @@ func (h *baseNetworkControllerEventHandler) areResourcesEqual(objType reflect.Ty
 		if !ok {
 			return false, fmt.Errorf("could not cast obj2 of type %T to *kapi.Node", obj2)
 		}
+
+		// when shouldUpdateNode is false, the hostsubnet is not assigned by ovn-kubernetes
+		shouldUpdate, err := shouldUpdateNode(node2, node1)
+		if err != nil {
+			klog.Errorf(err.Error())
+		}
+		return !shouldUpdate, nil
+
+	case factory.NodeParsedType:
+		nodeExtra1, ok := obj1.(*util.NodeExtra)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj1 of type %T to *NodeExtra", obj1)
+		}
+		nodeExtra2, ok := obj2.(*util.NodeExtra)
+		if !ok {
+			return false, fmt.Errorf("could not cast obj2 of type %T to *NodeExtra", obj2)
+		}
+
+		node1 := nodeExtra1.Node
+		node2 := nodeExtra2.Node
 
 		// when shouldUpdateNode is false, the hostsubnet is not assigned by ovn-kubernetes
 		shouldUpdate, err := shouldUpdateNode(node2, node1)
@@ -167,6 +188,9 @@ func (h *baseNetworkControllerEventHandler) getResourceFromInformerCache(objType
 	case factory.IPAMClaimsType:
 		obj, err = watchFactory.GetIPAMClaim(namespace, name)
 
+	case factory.NodeParsedType:
+		obj, err = watchFactory.GetNodeParsed(name)
+
 	default:
 		err = fmt.Errorf("object type %s not supported, cannot retrieve it from informers cache",
 			objType)
@@ -208,6 +232,15 @@ func (h *baseNetworkControllerEventHandler) isObjectInTerminalState(objType refl
 
 	default:
 		return false
+	}
+}
+
+func (h *baseNetworkControllerEventHandler) unpackResource(objType reflect.Type, obj interface{}) interface{} {
+	switch objType {
+	case factory.NodeParsedType:
+		return obj.(*util.NodeExtra).Node
+	default:
+		return obj
 	}
 }
 

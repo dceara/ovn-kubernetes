@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -590,10 +591,23 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 	return nil
 }
 
+type ovnkInformerTransformerConfig struct {
+	factory.DefaultObjTransformerConfig
+}
+
+func (c *ovnkInformerTransformerConfig) GetObjTransformer(oType reflect.Type) factory.InformerObjTransformer {
+	switch oType {
+	case factory.NodeParsedType:
+		return util.NewNodeTransformer()
+	default:
+		return c.DefaultObjTransformerConfig.GetObjTransformer(oType)
+	}
+}
+
 // newWatchFactory returns the proper watch factory to use depending on the run
 // mode
 func newWatchFactory(runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset) (watchFactory *factory.WatchFactory, err error) {
-	objTransformerConfig := &factory.DefaultObjTransformerConfig{}
+	objTransformerConfig := &ovnkInformerTransformerConfig{}
 	switch {
 	case runMode.clusterManager && runMode.ovnkubeController:
 		watchFactory, err = factory.NewMasterWatchFactory(ovnClientset.GetMasterClientset(), objTransformerConfig)

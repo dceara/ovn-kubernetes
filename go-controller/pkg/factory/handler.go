@@ -455,7 +455,7 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 				i.transformer.Transform)
 		},
 		DeleteFunc: func(obj interface{}) {
-			realObj, err := ensureObjectOnDelete(obj, i.oType)
+			realObj, err := ensureObjectOnDelete(obj, expectedOType(i.oType))
 			if err != nil {
 				klog.Errorf(err.Error())
 				return
@@ -572,9 +572,20 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 		return userdefinednetworklister.NewUserDefinedNetworkLister(sharedInformer.GetIndexer()), nil
 	case ClusterUserDefinedNetworkType:
 		return userdefinednetworklister.NewClusterUserDefinedNetworkLister(sharedInformer.GetIndexer()), nil
+	case NodeParsedType:
+		return listers.NewNodeLister(sharedInformer.GetIndexer()), nil
 	}
 
 	return nil, fmt.Errorf("cannot create lister from type %v", oType)
+}
+
+func expectedOType(oType reflect.Type) reflect.Type {
+	switch oType {
+	case NodeParsedType:
+		return NodeType
+	default:
+		return oType
+	}
 }
 
 func newBaseInformer(oType reflect.Type, objTransformerConfig InformerObjTransformerConfig, sharedInformer cache.SharedIndexInformer) (*informer, error) {

@@ -1,17 +1,21 @@
 package util
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
 	"net"
 	"net/netip"
+	"reflect"
 	"strconv"
+	"sync"
 
 	"github.com/gaissmai/cidrtree"
 	corev1 "k8s.io/api/core/v1"
 	kapi "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/util/retry"
@@ -21,6 +25,342 @@ import (
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/kube"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/types"
 )
+
+// TODO
+type NodeExtra struct {
+	// Parsed from node annotations.
+	L3GatewayConfig          *L3GatewayConfig                     // OvnNodeL3GatewayConfig
+	GatewayMtuSupport        bool                                 // OvnNodeGatewayMtuSupport
+	MgmtPortDetails          ManagementPortDetails                // OvnNodeManagementPort
+	MgmtPortMacAddressMap    map[string]net.HardwareAddr          // OvnNodeManagementPortMacAddresses
+	ChassisId                string                               // OvnNodeChassisID
+	IfAddr                   *ParsedNodeEgressIPConfiguration     // OvnNodeIfAddr
+	JoinSubnet               []*net.IPNet                         // ovnNodeGRLRPAddr
+	JoinSubnets              map[string]ParsedNodeIPConfiguration // OVNNodeGRLRPAddrs
+	MasqSubnet               []*net.IPNet                         // OvnNodeMasqCIDR
+	HostCIDRs                []string                             // OVNNodeHostCIDRs  TODO: string??
+	SecondaryHostEgressIPs   sets.Set[string]                     // OVNNodeSecondaryHostEgressIPs
+	EgressIPConfiguration    *ParsedNodeEgressIPConfiguration     // cloudEgressIPConfigAnnotationKey
+	ZoneName                 string                               // OvnNodeZoneName
+	HasMigratedZone          bool                                 // OvnNodeMigratedZoneName
+	TransitSwitchPortAddrs   []*net.IPNet                         // ovnTransitSwitchPortAddr
+	NodeID                   int                                  // ovnNodeID
+	NetworkIDs               map[string]int                       // ovnNetworkIDs
+	Layer2NodeGRLRPTunnelIDs map[string]int                       // ovnUDNLayer2NodeGRLRPTunnelIDs
+
+	HostSubnets  map[string][]*net.IPNet // OvnNodeSubnets
+	NoHostSubnet bool                    // TODO NoHostSubnet()
+
+	annotationParsingErrors map[string]error  // TODO: comment
+	annotations             map[string]string // TODO: comment
+
+	Node            *v1.Node
+	ResourceVersion string
+}
+
+// TODO
+func NewNodeExtra(node *v1.Node) *NodeExtra {
+	annotationParsingErrors := map[string]error{}
+	annotations := map[string]string{}
+	l3GatewayConfig, err := ParseNodeL3GatewayAnnotation(node)
+	annotationParsingErrors[OvnNodeL3GatewayConfig] = err
+	annotations[OvnNodeL3GatewayConfig] = node.Annotations[OvnNodeL3GatewayConfig]
+
+	pfID, funcID, err := ParseNodeManagementPortAnnotation(node)
+	annotationParsingErrors[OvnNodeManagementPort] = err
+
+	mgmtPortMacAddressMap, err := ParseAllNodeManagementPortMACAddresses(node)
+	annotationParsingErrors[OvnNodeManagementPortMacAddresses] = err
+
+	chassisId, err := ParseNodeChassisIDAnnotation(node)
+	annotationParsingErrors[OvnNodeChassisID] = err
+
+	ifAddr, err := ParseNodePrimaryIfAddr(node)
+	annotationParsingErrors[OvnNodeIfAddr] = err
+
+	joinSubnet, err := ParseNodeGatewayRouterLRPAddrs(node)
+	annotationParsingErrors[OvnNodeGRLRPAddr] = err
+
+	joinSubnets, err := ParseAllNodeGatewayRouterJoinNetwork(node)
+	annotationParsingErrors[OVNNodeGRLRPAddrs] = err
+
+	masqSubnet, err := ParseNodeMasqueradeSubnet(node)
+	annotationParsingErrors[OvnNodeMasqCIDR] = err
+
+	hostCIDRs, err := ParseNodeHostCIDRsList(node)
+	annotationParsingErrors[OVNNodeHostCIDRs] = err
+	annotations[OVNNodeHostCIDRs] = node.Annotations[OVNNodeHostCIDRs]
+
+	secondaryHostEgressIPs, err := ParseNodeSecondaryHostEgressIPsAnnotation(node)
+	annotationParsingErrors[OVNNodeSecondaryHostEgressIPs] = err
+
+	egressIPConfiguration, err := ParseCloudEgressIPConfig(node)
+	annotationParsingErrors[CloudEgressIPConfigAnnotationKey] = err
+
+	transitSwitchPortAddrs, err := ParseNodeTransitSwitchPortAddrs(node)
+	annotationParsingErrors[OvnTransitSwitchPortAddr] = err
+
+	networkIDs, err := ParseAllNetworkIDAnnotation(node)
+	annotationParsingErrors[OvnNetworkIDs] = err
+
+	layer2NodeGRLRPTunnelIDs, err := ParseAllUDNLayer2NodeGRLRPTunnelIDs(node)
+	annotationParsingErrors[OvnUDNLayer2NodeGRLRPTunnelIDs] = err
+
+	hostSubnets, err := ParseAllNodeHostSubnetAnnotation(node)
+	annotationParsingErrors[OvnNodeSubnets] = err
+	annotations[OvnNodeSubnets] = node.Annotations[OvnNodeSubnets]
+
+	return &NodeExtra{
+		L3GatewayConfig:   l3GatewayConfig,
+		GatewayMtuSupport: ParseNodeGatewayMTUSupport(node),
+		MgmtPortDetails: ManagementPortDetails{
+			PfId:   pfID,
+			FuncId: funcID,
+		},
+		MgmtPortMacAddressMap:    mgmtPortMacAddressMap,
+		ChassisId:                chassisId,
+		IfAddr:                   ifAddr,
+		JoinSubnet:               joinSubnet,
+		JoinSubnets:              joinSubnets,
+		MasqSubnet:               masqSubnet,
+		HostCIDRs:                hostCIDRs,
+		SecondaryHostEgressIPs:   secondaryHostEgressIPs,
+		EgressIPConfiguration:    egressIPConfiguration,
+		ZoneName:                 GetNodeZone(node),
+		HasMigratedZone:          HasNodeMigratedZone(node),
+		TransitSwitchPortAddrs:   transitSwitchPortAddrs,
+		NodeID:                   GetNodeID(node),
+		NetworkIDs:               networkIDs,
+		Layer2NodeGRLRPTunnelIDs: layer2NodeGRLRPTunnelIDs,
+		HostSubnets:              hostSubnets,
+		NoHostSubnet:             NoHostSubnet(node),
+		annotationParsingErrors:  annotationParsingErrors,
+		annotations:              annotations,
+
+		Node:            node,
+		ResourceVersion: node.GetResourceVersion(),
+	}
+}
+
+// TODO
+func (ne *NodeExtra) GetChassisID() (string, error) {
+	if err := ne.annotationParsingErrors[OvnNodeChassisID]; err != nil {
+		return "", err
+	}
+	return ne.ChassisId, nil
+}
+
+func (ne *NodeExtra) GetL3GatewayConfig() (*L3GatewayConfig, error) {
+	if err := ne.annotationParsingErrors[OvnNodeL3GatewayConfig]; err != nil {
+		return nil, err
+	}
+	return ne.L3GatewayConfig, nil
+}
+
+func (ne *NodeExtra) GetNodeHostSubnet(netName string) ([]*net.IPNet, error) {
+	if err := ne.annotationParsingErrors[OvnNodeSubnets]; err != nil {
+		return nil, err
+	}
+	subnets, ok := ne.HostSubnets[netName]
+	if !ok {
+		return nil, newAnnotationNotSetError("node %q has no %q annotation for network %s", ne.Node.Name, OvnNodeSubnets, netName)
+	}
+	return subnets, nil
+}
+
+func (ne *NodeExtra) GetNodeHostAddrs() ([]string, error) {
+	if err := ne.annotationParsingErrors[OVNNodeHostCIDRs]; err != nil {
+		return nil, err
+	}
+
+	// TODO: copied from ParseNodeHostCIDRsDropNetMask
+	hostAddrs := make([]string, 0, len(ne.HostCIDRs))
+	for _, cidr := range ne.HostCIDRs {
+		ip, _, err := net.ParseCIDR(cidr)
+		if err != nil || ip == nil {
+			return nil, fmt.Errorf("failed to parse node host cidr: %w", err)
+		}
+		hostAddrs = append(hostAddrs, ip.String())
+	}
+	return hostAddrs, nil
+}
+
+func (ne *NodeExtra) GetNodeGatewayRouterJoinAddr() ([]*net.IPNet, error) {
+	if err := ne.annotationParsingErrors[OvnNodeGRLRPAddr]; err != nil {
+		return nil, err
+	}
+
+	return ne.JoinSubnet, nil
+}
+
+func (ne *NodeExtra) GetNodeGatewayRouterJoinAddrs(network string) ([]*net.IPNet, error) {
+	if err := ne.annotationParsingErrors[OVNNodeGRLRPAddrs]; err != nil {
+		return nil, err
+	}
+	joinSubnetIPConfig, found := ne.JoinSubnets[network]
+	if !found {
+		return nil, newAnnotationNotSetError("unable to fetch join subnet annotation value on node %s for network %s",
+			ne.Node.Name, network)
+	}
+
+	return joinSubnetIPConfig.ConvertToIPNet(), nil
+}
+
+func (ne *NodeExtra) GetTransitSwitchPortAddrs() ([]*net.IPNet, error) {
+	if err := ne.annotationParsingErrors[OvnTransitSwitchPortAddr]; err != nil {
+		return nil, err
+	}
+
+	return ne.TransitSwitchPortAddrs, nil
+}
+
+func (ne *NodeExtra) GetNodeManagementPortMACAddresses(network string) (net.HardwareAddr, error) {
+	if err := ne.annotationParsingErrors[OvnNodeManagementPortMacAddresses]; err != nil {
+		return nil, err
+	}
+	mgmtPortMacAddress, found := ne.MgmtPortMacAddressMap[network]
+	if !found {
+		return nil, newAnnotationNotSetError("unable to fetch mgmtPortMacAddress annotation value on node %s for network %s",
+			ne.Node.Name, network)
+	}
+
+	return mgmtPortMacAddress, nil
+}
+
+func (ne *NodeExtra) GetNodePrimaryIfAddr() (*ParsedNodeEgressIPConfiguration, error) {
+	if err := ne.annotationParsingErrors[OvnNodeIfAddr]; err != nil {
+		return nil, err
+	}
+
+	return ne.IfAddr, nil
+}
+
+func (ne *NodeExtra) GetNodeUDNLayer2GRLRPTunnelID(network string) (int, error) {
+	if err := ne.annotationParsingErrors[OvnUDNLayer2NodeGRLRPTunnelIDs]; err != nil {
+		return InvalidID, err
+	}
+
+	if tunnel_id, found := ne.Layer2NodeGRLRPTunnelIDs[network]; !found {
+		return InvalidID, fmt.Errorf("failed to find UDN Layer2 Node GR LRP tunnel id for network %s", network)
+	} else {
+		return tunnel_id, nil
+	}
+}
+
+// TODO copied from base_network_controller.go
+// isLocalZoneNode returns true if the node is part of the local zone.
+func (ne *NodeExtra) IsLocalZoneNodeInfo(zone string) bool {
+	/** HACK BEGIN **/
+	// TODO(tssurya): Remove this HACK a few months from now. This has been added only to
+	// minimize disruption for upgrades when moving to interconnect=true.
+	// We want the legacy ovnkube-master to wait for remote ovnkube-node to
+	// signal it using "k8s.ovn.org/remote-zone-migrated" annotation before
+	// considering a node as remote when we upgrade from "global" (1 zone IC)
+	// zone to multi-zone. This is so that network disruption for the existing workloads
+	// is negligible and until the point where ovnkube-node flips the switch to connect
+	// to the new SBDB, it would continue talking to the legacy RAFT ovnkube-sbdb to ensure
+	// OVN/OVS flows are intact.
+	if zone == types.OvnDefaultZone {
+		return !ne.HasMigratedZone
+	}
+	/** HACK END **/
+	return ne.ZoneName == zone
+}
+
+func (ne *NodeExtra) ChassisIDEqual(otherNe *NodeExtra) bool {
+	return ne.ChassisId == otherNe.ChassisId
+}
+
+func (ne *NodeExtra) NodeIDAnnotationEqual(otherNe *NodeExtra) bool {
+	return ne.annotations[OvnNodeID] == otherNe.annotations[OvnNodeID]
+}
+
+func (ne *NodeExtra) L3GatewayConfigEqual(otherNe *NodeExtra) bool {
+	return reflect.DeepEqual(ne.L3GatewayConfig, otherNe.L3GatewayConfig)
+}
+
+func (ne *NodeExtra) NodeManagementPortMacAddressEqual(otherNe *NodeExtra, network string) bool {
+	mac1, found1 := ne.MgmtPortMacAddressMap[network]
+	mac2, found2 := otherNe.MgmtPortMacAddressMap[network]
+	return found1 == found2 && bytes.Equal(mac1, mac2)
+}
+
+func (ne *NodeExtra) TransitSwitchPortAddrAnnotationEqual(otherNe *NodeExtra) bool {
+	return ne.annotations[OvnTransitSwitchPortAddr] == otherNe.annotations[OvnTransitSwitchPortAddr]
+}
+
+func (ne *NodeExtra) HostCIDRsEqual(otherNe *NodeExtra) bool {
+	return reflect.DeepEqual(sets.New(ne.HostCIDRs...), sets.New(otherNe.HostCIDRs...))
+}
+
+func (ne *NodeExtra) HostSubnetEqual(otherNe *NodeExtra, network string) bool {
+	subnet1, found1 := ne.HostSubnets[network]
+	subnet2, found2 := otherNe.HostSubnets[network]
+	return found1 == found2 && reflect.DeepEqual(subnet1, subnet2)
+}
+
+func (ne *NodeExtra) JoinSubnetEqual(otherNe *NodeExtra, network string) bool {
+	subnet1, found1 := ne.JoinSubnets[network]
+	subnet2, found2 := otherNe.JoinSubnets[network]
+	return found1 == found2 && reflect.DeepEqual(subnet1, subnet2)
+}
+
+// NodeTransformer implements the factory.InformerObjTransformer interface
+// and returns a NodeExtra which augments the *v1.Node argument with parsed
+// annotation information.
+type NodeTransformer struct {
+	nodeCache map[ktypes.UID]*NodeExtra
+	cacheLock sync.RWMutex
+}
+
+func NewNodeTransformer() *NodeTransformer {
+	return &NodeTransformer{
+		nodeCache: map[ktypes.UID]*NodeExtra{},
+	}
+}
+
+func (nt *NodeTransformer) Transform(nodeI interface{}, isDel bool) interface{} {
+	if nodeI == nil {
+		return nil
+	}
+
+	node := nodeI.(*v1.Node)
+	uid := node.GetUID()
+
+	nt.cacheLock.Lock()
+	defer nt.cacheLock.Unlock()
+
+	ne, foundInCache := nt.nodeCache[uid]
+	if isDel {
+		if foundInCache {
+			delete(nt.nodeCache, uid)
+		} else {
+			ne = NewNodeExtra(node)
+		}
+	} else {
+		if foundInCache {
+			if ne.ResourceVersion != node.GetResourceVersion() {
+				ne = NewNodeExtra(node)
+				nt.nodeCache[uid] = ne
+			}
+		} else {
+			ne = NewNodeExtra(node)
+			nt.nodeCache[uid] = ne
+		}
+	}
+	return ne
+}
+
+func (nt *NodeTransformer) Get(nodeUID ktypes.UID) (interface{}, error) {
+	nt.cacheLock.RLock()
+	defer nt.cacheLock.RUnlock()
+
+	if ne, ok := nt.nodeCache[nodeUID]; ok {
+		return ne, nil
+	} else {
+		return nil, fmt.Errorf("nodeExtra information for UID %s not found in cache", nodeUID)
+	}
+}
 
 // This handles the annotations used by the node to pass information about its local
 // network configuration to the master:
@@ -80,7 +420,7 @@ const (
 	// DEPRECATED; use ovnNodeGRLRPAddrs moving forward
 	// FIXME(tssurya): Remove this a few months from now; needed for backwards
 	// compatbility during upgrades while updating to use the new annotation "ovnNodeGRLRPAddrs"
-	ovnNodeGRLRPAddr = "k8s.ovn.org/node-gateway-router-lrp-ifaddr"
+	OvnNodeGRLRPAddr = "k8s.ovn.org/node-gateway-router-lrp-ifaddr"
 
 	// ovnNodeGRLRPAddrs is the CIDR form representation of Gate Router LRP IP address to join switch (i.e: 100.64.0.4/16)
 	// for all the networks keyed by the network-name and ipFamily.
@@ -107,7 +447,7 @@ const (
 	// egressIPConfigAnnotationKey is used to indicate the cloud subnet and
 	// capacity for each node. It is set by
 	// openshift/cloud-network-config-controller
-	cloudEgressIPConfigAnnotationKey = "cloud.network.openshift.io/egress-ipconfig"
+	CloudEgressIPConfigAnnotationKey = "cloud.network.openshift.io/egress-ipconfig"
 
 	// OvnNodeZoneName is the zone to which the node belongs to. It is set by ovnkube-node.
 	// ovnkube-node gets the node's zone from the OVN Southbound database.
@@ -129,28 +469,30 @@ const (
 	OvnNodeMigratedZoneName = "k8s.ovn.org/remote-zone-migrated"
 	/** HACK END **/
 
-	// ovnTransitSwitchPortAddr is the annotation to store the node Transit switch port ips.
+	// OvnTransitSwitchPortAddr is the annotation to store the node Transit switch port ips.
 	// It is set by cluster manager.
-	ovnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
+	OvnTransitSwitchPortAddr = "k8s.ovn.org/node-transit-switch-port-ifaddr"
 
 	// ovnNodeID is the id (of type integer) of a node. It is set by cluster-manager.
 	ovnNodeID = "k8s.ovn.org/node-id"
+	//TODO dceara: merge with above
+	OvnNodeID = "k8s.ovn.org/node-id"
 
 	// InvalidNodeID indicates an invalid node id
 	InvalidNodeID = -1
 
-	// ovnNetworkIDs is the constant string representing the ids allocated for the
+	// OvnNetworkIDs is the constant string representing the ids allocated for the
 	// default network and other layer3 secondary networks by cluster manager.
-	ovnNetworkIDs = "k8s.ovn.org/network-ids"
+	OvnNetworkIDs = "k8s.ovn.org/network-ids"
 
-	// ovnUDNLayer2NodeGRLRPTunnelIDs is the constant string representing the tunnel id allocated for the
+	// OvnUDNLayer2NodeGRLRPTunnelIDs is the constant string representing the tunnel id allocated for the
 	// UDN L2 network for this node's GR LRP by cluster manager. This is used to create the remote tunnel
 	// ports for each node.
 	// "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids": "{
 	//		"l2-network-a":"5",
 	//		"l2-network-b":"10"}
 	// }",
-	ovnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
+	OvnUDNLayer2NodeGRLRPTunnelIDs = "k8s.ovn.org/udn-layer2-node-gateway-router-lrp-tunnel-ids"
 
 	// InvalidID signifies its an invalid network id or invalid tunnel id
 	InvalidID = -1
@@ -540,35 +882,73 @@ func ParseNodeManagementPortMACAddresses(node *kapi.Node, netName string) (net.H
 	return net.ParseMAC(macAddress)
 }
 
-// ParseUDNLayer2NodeGRLRPTunnelIDs parses the 'ovnUDNLayer2NodeGRLRPTunnelIDs' annotation
+// ParseNodeManagementPortMACAddresses parses the 'OvnNodeManagementPortMacAddresses' annotation
+// for all networks and returns the map with mac addresses for each of them.
+func ParseAllNodeManagementPortMACAddresses(node *kapi.Node) (map[string]net.HardwareAddr, error) {
+	macAddressMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNodeManagementPortMacAddresses)
+	if err != nil {
+		return nil, fmt.Errorf("macAddress annotation not found for node %s; error: %w", node.Name, err)
+	}
+	parsedMacAddresses := make(map[string]net.HardwareAddr)
+	for network, macAddress := range macAddressMap {
+		mac, err := net.ParseMAC(macAddress)
+		if err != nil {
+			return nil, fmt.Errorf("invalid macAddress %s for network %s on node %s", macAddress, network, node.Name)
+		}
+		parsedMacAddresses[network] = mac
+	}
+	return parsedMacAddresses, nil
+}
+
+// ParseUDNLayer2NodeGRLRPTunnelIDs parses the 'OvnUDNLayer2NodeGRLRPTunnelIDs' annotation
 // for the specified network in 'netName' and returns the tunnelID.
 func ParseUDNLayer2NodeGRLRPTunnelIDs(node *kapi.Node, netName string) (int, error) {
-	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, ovnUDNLayer2NodeGRLRPTunnelIDs)
+	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, OvnUDNLayer2NodeGRLRPTunnelIDs)
 	if err != nil {
 		return InvalidID, err
 	}
 
 	tunnelID, ok := tunnelIDsMap[netName]
 	if !ok {
-		return InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnUDNLayer2NodeGRLRPTunnelIDs, netName)
+		return InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, OvnUDNLayer2NodeGRLRPTunnelIDs, netName)
 	}
 
 	return strconv.Atoi(tunnelID)
 }
 
-// UpdateUDNLayer2NodeGRLRPTunnelIDs updates the ovnUDNLayer2NodeGRLRPTunnelIDs annotation for the network name 'netName' with the tunnel id 'tunnelID'.
+// ParseAllUDNLayer2NodeGRLRPTunnelIDs parses the 'OvnUDNLayer2NodeGRLRPTunnelIDs' annotation
+// for the all networks and returns a map of IDs indexed by network names.
+func ParseAllUDNLayer2NodeGRLRPTunnelIDs(node *kapi.Node) (map[string]int, error) {
+	tunnelIDsMap, err := parseNetworkMapAnnotation(node.Annotations, OvnUDNLayer2NodeGRLRPTunnelIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedTunnelIDsMap := make(map[string]int, len(tunnelIDsMap))
+	for network, tunnelIDStr := range tunnelIDsMap {
+		tunnelID, err := strconv.Atoi(tunnelIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed parsing node %s GR LRP tunnel IDs %s for network %s: %w", node.Name, tunnelIDStr, network, err)
+		}
+		parsedTunnelIDsMap[network] = tunnelID
+	}
+	return parsedTunnelIDsMap, nil
+}
+
+// UpdateUDNLayer2NodeGRLRPTunnelIDs updates the OvnUDNLayer2NodeGRLRPTunnelIDs annotation for the network name 'netName' with the tunnel id 'tunnelID'.
 // If 'tunnelID' is invalid tunnel ID (-1), then it deletes that network from the tunnel ids annotation.
 func UpdateUDNLayer2NodeGRLRPTunnelIDs(annotations map[string]string, netName string, tunnelID int) (map[string]string, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	if err := updateNetworkAnnotation(annotations, netName, tunnelID, ovnUDNLayer2NodeGRLRPTunnelIDs); err != nil {
+	if err := updateNetworkAnnotation(annotations, netName, tunnelID, OvnUDNLayer2NodeGRLRPTunnelIDs); err != nil {
 		return nil, err
 	}
 	return annotations, nil
 }
 
-type primaryIfAddrAnnotation struct {
+// TODO: unexport
+type PrimaryIfAddrAnnotation struct {
 	IPv4 string `json:"ipv4,omitempty"`
 	IPv6 string `json:"ipv6,omitempty"`
 }
@@ -578,7 +958,7 @@ func SetNodePrimaryIfAddrs(nodeAnnotator kube.Annotator, ifAddrs []*net.IPNet) (
 	nodeIPNetv4, _ := MatchFirstIPNetFamily(false, ifAddrs)
 	nodeIPNetv6, _ := MatchFirstIPNetFamily(true, ifAddrs)
 
-	primaryIfAddrAnnotation := primaryIfAddrAnnotation{}
+	primaryIfAddrAnnotation := PrimaryIfAddrAnnotation{}
 	if nodeIPNetv4 != nil {
 		primaryIfAddrAnnotation.IPv4 = nodeIPNetv4.String()
 	}
@@ -596,7 +976,7 @@ func createPrimaryIfAddrAnnotation(annotationName string, nodeAnnotation map[str
 	if nodeAnnotation == nil {
 		nodeAnnotation = make(map[string]interface{})
 	}
-	primaryIfAddrAnnotation := primaryIfAddrAnnotation{}
+	primaryIfAddrAnnotation := PrimaryIfAddrAnnotation{}
 	if nodeIPNetv4 != nil {
 		primaryIfAddrAnnotation.IPv4 = nodeIPNetv4.String()
 	}
@@ -643,12 +1023,12 @@ func updateJoinSubnetAnnotation(annotations map[string]string, annotationName, n
 				annotations, err)
 		}
 		// in the case that the annotation does not exist
-		subnetsMap = map[string]primaryIfAddrAnnotation{}
+		subnetsMap = map[string]PrimaryIfAddrAnnotation{}
 	}
 
 	// add or delete host subnet of the specified network
 	if len(joinSubnets) != 0 {
-		subnetVal := primaryIfAddrAnnotation{}
+		subnetVal := PrimaryIfAddrAnnotation{}
 		for _, net := range joinSubnets {
 			if utilnet.IsIPv4CIDR(net) {
 				subnetVal.IPv4 = net.String()
@@ -676,12 +1056,12 @@ func updateJoinSubnetAnnotation(annotations map[string]string, annotationName, n
 	return nil
 }
 
-func parseJoinSubnetAnnotation(nodeAnnotations map[string]string, annotationName string) (map[string]primaryIfAddrAnnotation, error) {
+func parseJoinSubnetAnnotation(nodeAnnotations map[string]string, annotationName string) (map[string]PrimaryIfAddrAnnotation, error) {
 	annotation, ok := nodeAnnotations[annotationName]
 	if !ok {
 		return nil, newAnnotationNotSetError("could not find %q annotation", annotationName)
 	}
-	joinSubnetsNetworkMap := make(map[string]primaryIfAddrAnnotation)
+	joinSubnetsNetworkMap := make(map[string]PrimaryIfAddrAnnotation)
 	if err := json.Unmarshal([]byte(annotation), &joinSubnetsNetworkMap); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal annotation: %s, err: %w", annotationName, err)
 	}
@@ -690,9 +1070,9 @@ func parseJoinSubnetAnnotation(nodeAnnotations map[string]string, annotationName
 		return nil, fmt.Errorf("unexpected empty %s annotation", annotationName)
 	}
 
-	joinsubnetMap := make(map[string]primaryIfAddrAnnotation)
+	joinsubnetMap := make(map[string]PrimaryIfAddrAnnotation)
 	for netName, subnetsStr := range joinSubnetsNetworkMap {
-		subnetVal := primaryIfAddrAnnotation{}
+		subnetVal := PrimaryIfAddrAnnotation{}
 		if subnetsStr.IPv4 == "" && subnetsStr.IPv6 == "" {
 			return nil, fmt.Errorf("annotation: %s does not have any IP information set", annotationName)
 		}
@@ -722,11 +1102,11 @@ func parseJoinSubnetAnnotation(nodeAnnotations map[string]string, annotationName
 // CreateNodeTransitSwitchPortAddrAnnotation creates the node annotation for the node's Transit switch port addresses.
 func CreateNodeTransitSwitchPortAddrAnnotation(nodeAnnotation map[string]interface{}, nodeIPNetv4,
 	nodeIPNetv6 *net.IPNet) (map[string]interface{}, error) {
-	return createPrimaryIfAddrAnnotation(ovnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
+	return createPrimaryIfAddrAnnotation(OvnTransitSwitchPortAddr, nodeAnnotation, nodeIPNetv4, nodeIPNetv6)
 }
 
 func NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode *corev1.Node) bool {
-	return oldNode.Annotations[ovnTransitSwitchPortAddr] != newNode.Annotations[ovnTransitSwitchPortAddr]
+	return oldNode.Annotations[OvnTransitSwitchPortAddr] != newNode.Annotations[OvnTransitSwitchPortAddr]
 }
 
 // CreateNodeMasqueradeSubnetAnnotation sets the IPv4 / IPv6 values of the node's Masquerade subnet.
@@ -759,18 +1139,23 @@ type ParsedIFAddr struct {
 	Net *net.IPNet
 }
 
+type ParsedNodeIPConfiguration struct {
+	V4 ParsedIFAddr
+	V6 ParsedIFAddr
+}
+
 type ParsedNodeEgressIPConfiguration struct {
 	V4       ParsedIFAddr
 	V6       ParsedIFAddr
 	Capacity Capacity
 }
 
-func GetNodeIfAddrAnnotation(node *kapi.Node) (*primaryIfAddrAnnotation, error) {
+func GetNodeIfAddrAnnotation(node *kapi.Node) (*PrimaryIfAddrAnnotation, error) {
 	nodeIfAddrAnnotation, ok := node.Annotations[OvnNodeIfAddr]
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
 	}
-	nodeIfAddr := &primaryIfAddrAnnotation{}
+	nodeIfAddr := &PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), nodeIfAddr); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", OvnNodeIfAddr, node.Name, err)
 	}
@@ -804,20 +1189,20 @@ func ParseNodePrimaryIfAddr(node *kapi.Node) (*ParsedNodeEgressIPConfiguration, 
 // ParseNodeGatewayRouterLRPAddr returns the IPv4 / IPv6 values for the node's gateway router
 // DEPRECATED; kept for backwards compatibility
 func ParseNodeGatewayRouterLRPAddr(node *kapi.Node) (net.IP, error) {
-	nodeIfAddrAnnotation, ok := node.Annotations[ovnNodeGRLRPAddr]
+	nodeIfAddrAnnotation, ok := node.Annotations[OvnNodeGRLRPAddr]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", ovnNodeGRLRPAddr, node.Name)
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeGRLRPAddr, node.Name)
 	}
-	nodeIfAddr := primaryIfAddrAnnotation{}
+	nodeIfAddr := PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), &nodeIfAddr); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", ovnNodeGRLRPAddr, node.Name, err)
+		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", OvnNodeGRLRPAddr, node.Name, err)
 	}
 	if nodeIfAddr.IPv4 == "" && nodeIfAddr.IPv6 == "" {
 		return nil, fmt.Errorf("node: %q does not have any IP information set", node.Name)
 	}
 	ip, _, err := net.ParseCIDR(nodeIfAddr.IPv4)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse annotation: %s for node %q, err: %v", ovnNodeGRLRPAddr, node.Name, err)
+		return nil, fmt.Errorf("failed to parse annotation: %s for node %q, err: %v", OvnNodeGRLRPAddr, node.Name, err)
 	}
 	return ip, nil
 }
@@ -830,7 +1215,7 @@ func parsePrimaryIfAddrAnnotation(node *kapi.Node, annotationName string) ([]*ne
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", annotationName, node.Name)
 	}
-	nodeIfAddr := primaryIfAddrAnnotation{}
+	nodeIfAddr := PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), &nodeIfAddr); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %w", annotationName, node.Name, err)
 	}
@@ -844,7 +1229,7 @@ func parsePrimaryIfAddrAnnotation(node *kapi.Node, annotationName string) ([]*ne
 	return ipAddrs, nil
 }
 
-func convertPrimaryIfAddrAnnotationToIPNet(ifAddr primaryIfAddrAnnotation) ([]*net.IPNet, error) {
+func convertPrimaryIfAddrAnnotationToIPNet(ifAddr PrimaryIfAddrAnnotation) ([]*net.IPNet, error) {
 	var ipAddrs []*net.IPNet
 	if ifAddr.IPv4 != "" {
 		ip, ipNet, err := net.ParseCIDR(ifAddr.IPv4)
@@ -865,13 +1250,13 @@ func convertPrimaryIfAddrAnnotationToIPNet(ifAddr primaryIfAddrAnnotation) ([]*n
 }
 
 // ParseNodeGatewayRouterLRPAddrs returns the IPv4 and/or IPv6 addresses for the node's gateway router port
-// stored in the 'ovnNodeGRLRPAddr' annotation
+// stored in the 'OvnNodeGRLRPAddr' annotation
 func ParseNodeGatewayRouterLRPAddrs(node *kapi.Node) ([]*net.IPNet, error) {
-	return parsePrimaryIfAddrAnnotation(node, ovnNodeGRLRPAddr)
+	return parsePrimaryIfAddrAnnotation(node, OvnNodeGRLRPAddr)
 }
 
-func ParseNodeGatewayRouterJoinNetwork(node *kapi.Node, netName string) (primaryIfAddrAnnotation, error) {
-	var val primaryIfAddrAnnotation
+func ParseNodeGatewayRouterJoinNetwork(node *kapi.Node, netName string) (PrimaryIfAddrAnnotation, error) {
+	var val PrimaryIfAddrAnnotation
 	joinSubnetMap, err := parseJoinSubnetAnnotation(node.Annotations, OVNNodeGRLRPAddrs)
 	if err != nil {
 		return val, fmt.Errorf("unable to parse annotation %s on node %s: err %w",
@@ -883,6 +1268,62 @@ func ParseNodeGatewayRouterJoinNetwork(node *kapi.Node, netName string) (primary
 			node.Name, netName)
 	}
 	return val, nil
+}
+
+func parseNodeIPConfiguration(primaryIFAddr PrimaryIfAddrAnnotation) (ParsedNodeIPConfiguration, error) {
+	var nodeIPConfig ParsedNodeIPConfiguration
+
+	if primaryIFAddr.IPv4 != "" {
+		ipv4, v4Subnet, err := net.ParseCIDR(primaryIFAddr.IPv4)
+		if err != nil {
+			return nodeIPConfig, err
+		}
+		nodeIPConfig.V4 = ParsedIFAddr{
+			IP:  ipv4,
+			Net: v4Subnet,
+		}
+	}
+	if primaryIFAddr.IPv6 != "" {
+		ipv6, v6Subnet, err := net.ParseCIDR(primaryIFAddr.IPv6)
+		if err != nil {
+			return nodeIPConfig, err
+		}
+		nodeIPConfig.V6 = ParsedIFAddr{
+			IP:  ipv6,
+			Net: v6Subnet,
+		}
+	}
+	return nodeIPConfig, nil
+}
+
+func (nodeIPConfig *ParsedNodeIPConfiguration) ConvertToIPNet() []*net.IPNet {
+	var ipAddrs []*net.IPNet
+	if nodeIPConfig.V4.Net != nil {
+		ipAddrs = append(ipAddrs, &net.IPNet{IP: nodeIPConfig.V4.IP, Mask: nodeIPConfig.V4.Net.Mask})
+	}
+
+	if nodeIPConfig.V6.Net != nil {
+		ipAddrs = append(ipAddrs, &net.IPNet{IP: nodeIPConfig.V6.IP, Mask: nodeIPConfig.V6.Net.Mask})
+	}
+	return ipAddrs
+}
+
+func ParseAllNodeGatewayRouterJoinNetwork(node *kapi.Node) (map[string]ParsedNodeIPConfiguration, error) {
+	joinSubnetMap, err := parseJoinSubnetAnnotation(node.Annotations, OVNNodeGRLRPAddrs)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse annotation %s on node %s: err %w",
+			OVNNodeGRLRPAddrs, node.Name, err)
+	}
+
+	parsedJoinSubnets := make(map[string]ParsedNodeIPConfiguration)
+	for network, joinSubnet := range joinSubnetMap {
+		joinSubnetConfig, err := parseNodeIPConfiguration(joinSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("invalid join subnet %q for network %s on node %s", joinSubnetConfig, network, node.Name)
+		}
+		parsedJoinSubnets[network] = joinSubnetConfig
+	}
+	return parsedJoinSubnets, nil
 }
 
 // ParseNodeGatewayRouterJoinIPv4 returns the IPv4 address for the node's gateway router port
@@ -915,9 +1356,9 @@ func ParseNodeGatewayRouterJoinAddrs(node *kapi.Node, netName string) ([]*net.IP
 }
 
 // ParseNodeTransitSwitchPortAddrs returns the IPv4 and/or IPv6 addresses for the node's transit switch port
-// stored in the 'ovnTransitSwitchPortAddr' annotation
+// stored in the 'OvnTransitSwitchPortAddr' annotation
 func ParseNodeTransitSwitchPortAddrs(node *kapi.Node) ([]*net.IPNet, error) {
-	return parsePrimaryIfAddrAnnotation(node, ovnTransitSwitchPortAddr)
+	return parsePrimaryIfAddrAnnotation(node, OvnTransitSwitchPortAddr)
 }
 
 // ParseNodeMasqueradeSubnet returns the IPv4 and/or IPv6 networks for the node's gateway router port
@@ -945,9 +1386,9 @@ func GetNodeEIPConfig(node *kapi.Node) (*ParsedNodeEgressIPConfiguration, error)
 
 // ParseCloudEgressIPConfig returns the cloud's information concerning the node's primary network interface
 func ParseCloudEgressIPConfig(node *kapi.Node) (*ParsedNodeEgressIPConfiguration, error) {
-	egressIPConfigAnnotation, ok := node.Annotations[cloudEgressIPConfigAnnotationKey]
+	egressIPConfigAnnotation, ok := node.Annotations[CloudEgressIPConfigAnnotationKey]
 	if !ok {
-		return nil, newAnnotationNotSetError("%s annotation not found for node %q", cloudEgressIPConfigAnnotationKey, node.Name)
+		return nil, newAnnotationNotSetError("%s annotation not found for node %q", CloudEgressIPConfigAnnotationKey, node.Name)
 	}
 	nodeEgressIPConfig := []nodeEgressIPConfiguration{
 		{
@@ -962,7 +1403,7 @@ func ParseCloudEgressIPConfig(node *kapi.Node) (*ParsedNodeEgressIPConfiguration
 		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", OvnNodeIfAddr, node.Name, err)
 	}
 	if len(nodeEgressIPConfig) == 0 {
-		return nil, fmt.Errorf("empty annotation: %s for node: %q", cloudEgressIPConfigAnnotationKey, node.Name)
+		return nil, fmt.Errorf("empty annotation: %s for node: %q", CloudEgressIPConfigAnnotationKey, node.Name)
 	}
 
 	parsedEgressIPConfig, err := parseNodeEgressIPConfig(&nodeEgressIPConfig[0])
@@ -1056,7 +1497,7 @@ func ParseNodeHostIPDropNetMask(node *kapi.Node) (sets.Set[string], error) {
 	if !ok {
 		return nil, newAnnotationNotSetError("%s annotation not found for node %q", OvnNodeIfAddr, node.Name)
 	}
-	nodeIfAddr := &primaryIfAddrAnnotation{}
+	nodeIfAddr := &PrimaryIfAddrAnnotation{}
 	if err := json.Unmarshal([]byte(nodeIfAddrAnnotation), nodeIfAddr); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal annotation: %s for node %q, err: %v", OvnNodeIfAddr, node.Name, err)
 	}
@@ -1352,26 +1793,45 @@ func parseNetworkMapAnnotation(nodeAnnotations map[string]string, annotationName
 	return idsStrMap, nil
 }
 
-// ParseNetworkIDAnnotation parses the 'ovnNetworkIDs' annotation for the specified
+// ParseNetworkIDAnnotation parses the 'OvnNetworkIDs' annotation for the specified
 // network in 'netName' and returns the network id.
 func ParseNetworkIDAnnotation(node *kapi.Node, netName string) (int, error) {
-	networkIDsMap, err := parseNetworkMapAnnotation(node.Annotations, ovnNetworkIDs)
+	networkIDsMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNetworkIDs)
 	if err != nil {
 		return InvalidID, err
 	}
 
 	networkID, ok := networkIDsMap[netName]
 	if !ok {
-		return InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, ovnNetworkIDs, netName)
+		return InvalidID, newAnnotationNotSetError("node %q has no %q annotation for network %s", node.Name, OvnNetworkIDs, netName)
 	}
 
 	return strconv.Atoi(networkID)
 }
 
+// ParseNetworkIDAnnotation parses the 'OvnNetworkIDs' annotation for the specified
+// network in 'netName' and returns the network id.
+func ParseAllNetworkIDAnnotation(node *kapi.Node) (map[string]int, error) {
+	networkIDsMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNetworkIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	parsedNetworkIDsMap := make(map[string]int)
+	for network, networkIDStr := range networkIDsMap {
+		networkID, err := strconv.Atoi(networkIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse node %s network ID %s for network %s: %w", node.Name, networkIDStr, network)
+		}
+		parsedNetworkIDsMap[network] = networkID
+	}
+	return parsedNetworkIDsMap, nil
+}
+
 // updateNetworkAnnotation updates the provided annotationName in the 'annotations' map
 // with the provided ID in 'annotationName's value.  If 'id' is InvalidID (-1)
 // it deletes the annotationName annotation from the map.
-// It is currently used for ovnNetworkIDs annotation updates
+// It is currently used for OvnNetworkIDs annotation updates
 func updateNetworkAnnotation(annotations map[string]string, netName string, id int, annotationName string) error {
 	var bytes []byte
 
@@ -1412,13 +1872,13 @@ func updateNetworkAnnotation(annotations map[string]string, netName string, id i
 	return nil
 }
 
-// UpdateNetworkIDAnnotation updates the ovnNetworkIDs annotation for the network name 'netName' with the network id 'networkID'.
+// UpdateNetworkIDAnnotation updates the OvnNetworkIDs annotation for the network name 'netName' with the network id 'networkID'.
 // If 'networkID' is invalid network ID (-1), then it deletes that network from the network ids annotation.
 func UpdateNetworkIDAnnotation(annotations map[string]string, netName string, networkID int) (map[string]string, error) {
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	err := updateNetworkAnnotation(annotations, netName, networkID, ovnNetworkIDs)
+	err := updateNetworkAnnotation(annotations, netName, networkID, OvnNetworkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1428,7 +1888,7 @@ func UpdateNetworkIDAnnotation(annotations map[string]string, netName string, ne
 // GetNodeNetworkIDsAnnotationNetworkIDs parses the "k8s.ovn.org/network-ids" annotation
 // on a node and returns the map of network name and ids.
 func GetNodeNetworkIDsAnnotationNetworkIDs(node *kapi.Node) (map[string]int, error) {
-	networkIDsStrMap, err := parseNetworkMapAnnotation(node.Annotations, ovnNetworkIDs)
+	networkIDsStrMap, err := parseNetworkMapAnnotation(node.Annotations, OvnNetworkIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1444,7 +1904,7 @@ func GetNodeNetworkIDsAnnotationNetworkIDs(node *kapi.Node) (map[string]int, err
 	return networkIDsMap, nil
 }
 
-// NodeNetworkIDAnnotationChanged returns true if the ovnNetworkIDs annotation in the corev1.Nodes doesn't match
+// NodeNetworkIDAnnotationChanged returns true if the OvnNetworkIDs annotation in the corev1.Nodes doesn't match
 func NodeNetworkIDAnnotationChanged(oldNode, newNode *corev1.Node, netName string) bool {
 	oldNodeNetID, _ := ParseNetworkIDAnnotation(oldNode, netName)
 	newNodeNetID, _ := ParseNetworkIDAnnotation(newNode, netName)
