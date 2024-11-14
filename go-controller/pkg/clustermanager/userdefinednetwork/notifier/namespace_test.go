@@ -43,7 +43,7 @@ var _ = Describe("NamespaceNotifier", func() {
 			UserDefinedNetworkClient: udnv1fake.NewSimpleClientset(),
 		}
 		var err error
-		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
+		wf, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(wf.Start()).To(Succeed())
 	})

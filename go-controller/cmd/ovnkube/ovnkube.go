@@ -593,15 +593,16 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 // newWatchFactory returns the proper watch factory to use depending on the run
 // mode
 func newWatchFactory(runMode *ovnkubeRunMode, ovnClientset *util.OVNClientset) (watchFactory *factory.WatchFactory, err error) {
+	objTransformerConfig := &factory.DefaultObjTransformerConfig{}
 	switch {
 	case runMode.clusterManager && runMode.ovnkubeController:
-		watchFactory, err = factory.NewMasterWatchFactory(ovnClientset.GetMasterClientset())
+		watchFactory, err = factory.NewMasterWatchFactory(ovnClientset.GetMasterClientset(), objTransformerConfig)
 	case runMode.clusterManager:
-		watchFactory, err = factory.NewClusterManagerWatchFactory(ovnClientset.GetClusterManagerClientset())
+		watchFactory, err = factory.NewClusterManagerWatchFactory(ovnClientset.GetClusterManagerClientset(), objTransformerConfig)
 	case runMode.ovnkubeController:
-		watchFactory, err = factory.NewOVNKubeControllerWatchFactory(ovnClientset.GetOVNKubeControllerClientset())
+		watchFactory, err = factory.NewOVNKubeControllerWatchFactory(ovnClientset.GetOVNKubeControllerClientset(), objTransformerConfig)
 	case runMode.node:
-		watchFactory, err = factory.NewNodeWatchFactory(ovnClientset.GetNodeClientset(), runMode.identity)
+		watchFactory, err = factory.NewNodeWatchFactory(ovnClientset.GetNodeClientset(), objTransformerConfig, runMode.identity)
 	default:
 		err = fmt.Errorf("unsupported ovnkube run mode: %+v", runMode)
 	}

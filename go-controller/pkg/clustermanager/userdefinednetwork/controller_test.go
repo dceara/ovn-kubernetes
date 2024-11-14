@@ -55,7 +55,7 @@ var _ = Describe("User Defined Network Controller", func() {
 	newTestController := func(renderNADStub RenderNetAttachDefManifest, objects ...runtime.Object) *Controller {
 		cs = util.GetOVNClientset(objects...).GetClusterManagerClientset()
 		var err error
-		f, err = factory.NewClusterManagerWatchFactory(cs)
+		f, err = factory.NewClusterManagerWatchFactory(cs, &factory.DefaultObjTransformerConfig{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(f.Start()).To(Succeed())
 

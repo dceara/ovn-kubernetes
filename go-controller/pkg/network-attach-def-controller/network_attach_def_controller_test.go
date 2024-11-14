@@ -556,7 +556,7 @@ func TestSyncAll(t *testing.T) {
 			config.OVNKubernetesFeature.EnableNetworkSegmentation = true
 			config.OVNKubernetesFeature.EnableMultiNetwork = true
 			fakeClient := util.GetOVNClientset().GetOVNKubeControllerClientset()
-			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient)
+			wf, err := factory.NewOVNKubeControllerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 
 			tncm := &testNetworkControllerManager{

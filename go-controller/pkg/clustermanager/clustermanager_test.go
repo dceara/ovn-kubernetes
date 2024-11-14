@@ -98,7 +98,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -181,7 +181,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -273,7 +273,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -345,7 +345,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -456,7 +456,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -529,7 +529,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -641,7 +641,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -694,7 +694,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				fakeClient = &util.OVNClusterManagerClientset{
 					KubeClient: kubeFakeClient,
 				}
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -768,7 +768,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -827,7 +827,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				fakeClient = &util.OVNClusterManagerClientset{
 					KubeClient: kubeFakeClient,
 				}
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -894,7 +894,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -966,7 +966,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1069,7 +1069,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1128,7 +1128,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				fakeClient = &util.OVNClusterManagerClientset{
 					KubeClient: kubeFakeClient,
 				}
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1203,7 +1203,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1300,7 +1300,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -1414,7 +1414,7 @@ var _ = ginkgo.Describe("Cluster Manager", func() {
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				config.Kubernetes.HostNetworkNamespace = ""
 
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())

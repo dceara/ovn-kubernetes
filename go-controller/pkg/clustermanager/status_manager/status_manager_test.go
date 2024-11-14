@@ -222,7 +222,7 @@ var _ = Describe("Cluster Manager Status Manager", func() {
 		}
 		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
 		var err error
-		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
+		wf, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 		Expect(err).NotTo(HaveOccurred())
 		statusManager = NewStatusManager(wf, fakeClient)
 

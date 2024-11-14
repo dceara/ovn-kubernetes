@@ -32,7 +32,7 @@ var _ = ginkgo.Describe("Cluster manager DNS Name Resolver Controller operations
 		config.OVNKubernetesFeature.EnableDNSNameResolver = true
 		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
 		var err error
-		wf, err = factory.NewClusterManagerWatchFactory(fakeClient)
+		wf, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		dnsController = NewController(fakeClient, wf)
 

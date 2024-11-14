@@ -72,6 +72,35 @@ func (h *Handler) kill() bool {
 	return atomic.CompareAndSwapUint32(&h.tombstone, handlerAlive, handlerDead)
 }
 
+type InformerObjTransformer interface {
+	Transform(obj interface{}, isDel bool) interface{}
+	Get(uid ktypes.UID) (interface{}, error)
+}
+
+type InformerObjTransformerConfig interface {
+	GetObjTransformer(oType reflect.Type) InformerObjTransformer
+}
+
+// defaultObjTransformer is a no-op object transformer (it just returns
+// the original object).
+type DefaultObjTransformer struct{}
+
+func (*DefaultObjTransformer) Transform(obj interface{}, isDel bool) interface{} {
+	return obj
+}
+
+func (*DefaultObjTransformer) Get(uid ktypes.UID) (interface{}, error) {
+	return nil, fmt.Errorf("default object transformer doesn't support Get()")
+}
+
+// DefaultObjTransformerConfig is a no-op object transformer (it just returns
+// the original object).
+type DefaultObjTransformerConfig struct{}
+
+func (*DefaultObjTransformerConfig) GetObjTransformer(oType reflect.Type) InformerObjTransformer {
+	return &DefaultObjTransformer{}
+}
+
 type event struct {
 	obj     interface{}
 	oldObj  interface{}
@@ -113,6 +142,9 @@ type informer struct {
 
 	// queueMap handles distributing events across a queued handler's queues
 	queueMap *queueMap
+
+	// Transformer to be applied to all objects before passing them to handlers.
+	transformer InformerObjTransformer
 }
 
 func (i *informer) forEachQueuedHandler(f func(h *Handler)) {
@@ -355,11 +387,11 @@ func (qm *queueMap) releaseQueueMapEntry(key ktypes.NamespacedName, entry *queue
 }
 
 // enqueueEvent adds an event to the appropriate queue for the object
-func (qm *queueMap) enqueueEvent(oldObj, obj interface{}, oType reflect.Type, isDel bool, processFunc func(*event)) {
+func (qm *queueMap) enqueueEvent(oldObj, obj interface{}, oType reflect.Type, isDel bool, processFunc func(*event), transform func(obj interface{}, isDel bool) interface{}) {
 	key, entry := qm.getQueueMapEntry(oType, obj)
 	event := &event{
-		obj:    obj,
-		oldObj: oldObj,
+		obj:    transform(obj, isDel),
+		oldObj: transform(oldObj, isDel),
 		process: func(e *event) {
 			processFunc(e)
 			qm.releaseQueueMapEntry(key, entry, isDel)
@@ -399,7 +431,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 					h.OnAdd(e.obj, false)
 				})
 				metrics.MetricResourceAddLatency.Observe(time.Since(start).Seconds())
-			})
+			},
+				i.transformer.Transform)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			i.queueMap.enqueueEvent(oldObj, newObj, i.oType, false, func(e *event) {
@@ -418,7 +451,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 					}
 				})
 				metrics.MetricResourceUpdateLatency.Observe(time.Since(start).Seconds())
-			})
+			},
+				i.transformer.Transform)
 		},
 		DeleteFunc: func(obj interface{}) {
 			realObj, err := ensureObjectOnDelete(obj, i.oType)
@@ -433,7 +467,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 					h.OnDelete(e.obj)
 				})
 				metrics.MetricResourceDeleteLatency.Observe(time.Since(start).Seconds())
-			})
+			},
+				i.transformer.Transform)
 		},
 	}
 }
@@ -542,7 +577,7 @@ func newInformerLister(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 	return nil, fmt.Errorf("cannot create lister from type %v", oType)
 }
 
-func newBaseInformer(oType reflect.Type, sharedInformer cache.SharedIndexInformer) (*informer, error) {
+func newBaseInformer(oType reflect.Type, objTransformerConfig InformerObjTransformerConfig, sharedInformer cache.SharedIndexInformer) (*informer, error) {
 	lister, err := newInformerLister(oType, sharedInformer)
 	if err != nil {
 		klog.Errorf(err.Error())
@@ -550,21 +585,22 @@ func newBaseInformer(oType reflect.Type, sharedInformer cache.SharedIndexInforme
 	}
 
 	return &informer{
-		oType:    oType,
-		inf:      sharedInformer,
-		lister:   lister,
-		handlers: make(map[int]map[uint64]*Handler),
+		oType:       oType,
+		inf:         sharedInformer,
+		lister:      lister,
+		handlers:    make(map[int]map[uint64]*Handler),
+		transformer: objTransformerConfig.GetObjTransformer(oType),
 	}, nil
 }
 
-func newInformer(oType reflect.Type, sharedInformer cache.SharedIndexInformer) (*informer, error) {
-	i, err := newBaseInformer(oType, sharedInformer)
+func newInformer(oType reflect.Type, objTransformerConfig InformerObjTransformerConfig, sharedInformer cache.SharedIndexInformer) (*informer, error) {
+	i, err := newBaseInformer(oType, objTransformerConfig, sharedInformer)
 	if err != nil {
 		return nil, err
 	}
 	i.initialAddFunc = func(h *Handler, items []interface{}) {
 		for _, item := range items {
-			h.OnAdd(item, false)
+			h.OnAdd(i.transformer.Transform(item, false), false)
 		}
 	}
 	_, err = i.inf.AddEventHandler(i.newFederatedHandler())
@@ -575,9 +611,9 @@ func newInformer(oType reflect.Type, sharedInformer cache.SharedIndexInformer) (
 
 }
 
-func newQueuedInformer(oType reflect.Type, sharedInformer cache.SharedIndexInformer,
+func newQueuedInformer(oType reflect.Type, objTransformerConfig InformerObjTransformerConfig, sharedInformer cache.SharedIndexInformer,
 	stopChan chan struct{}, numEventQueues uint32) (*informer, error) {
-	i, err := newBaseInformer(oType, sharedInformer)
+	i, err := newBaseInformer(oType, objTransformerConfig, sharedInformer)
 	if err != nil {
 		return nil, err
 	}
@@ -598,7 +634,8 @@ func newQueuedInformer(oType reflect.Type, sharedInformer cache.SharedIndexInfor
 		for _, obj := range items {
 			addsMap.enqueueEvent(nil, obj, i.oType, false, func(e *event) {
 				h.OnAdd(e.obj, false)
-			})
+			},
+				i.transformer.Transform)
 		}
 
 		// Wait until all the object additions have been processed

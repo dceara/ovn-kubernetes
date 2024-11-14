@@ -73,7 +73,7 @@ func (o *FakeClusterManager) start(objects ...runtime.Object) {
 
 func (o *FakeClusterManager) init() {
 	var err error
-	o.watcher, err = factory.NewClusterManagerWatchFactory(o.fakeClient)
+	o.watcher, err = factory.NewClusterManagerWatchFactory(o.fakeClient, &factory.DefaultObjTransformerConfig{})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	err = o.watcher.Start()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

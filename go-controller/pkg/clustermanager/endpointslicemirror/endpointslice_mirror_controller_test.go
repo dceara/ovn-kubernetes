@@ -38,7 +38,7 @@ var _ = ginkgo.Describe("Cluster manager EndpointSlice mirror controller", func(
 		config.OVNKubernetesFeature.EnableDNSNameResolver = true
 
 		fakeClient = util.GetOVNClientset(objects...).GetClusterManagerClientset()
-		wf, err := factory.NewClusterManagerWatchFactory(fakeClient)
+		wf, err := factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		nadController, err = nad.NewNetAttachDefinitionController("test", &fakenad.FakeNetworkControllerManager{}, wf, nil)
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())

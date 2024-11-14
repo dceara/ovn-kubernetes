@@ -70,7 +70,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 
 				gomega.Expect(initConfig(ctx, config.OVNKubernetesFeatureConfig{EnableMultiNetwork: true})).To(gomega.Succeed())
 				var err error
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -139,7 +139,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 							EnableInterconnect: true},
 						)).To(gomega.Succeed())
 					var err error
-					f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+					f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					err = f.Start()
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -178,7 +178,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						)).To(gomega.Succeed())
 
 					var err error
-					f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+					f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					gomega.Expect(f.Start()).NotTo(gomega.HaveOccurred())
 
@@ -251,7 +251,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 
 				gomega.Expect(initConfig(ctx, config.OVNKubernetesFeatureConfig{EnableMultiNetwork: true})).To(gomega.Succeed())
 				var err error
-				f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+				f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
 				err = f.Start()
 				gomega.Expect(err).NotTo(gomega.HaveOccurred())
@@ -398,7 +398,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 								EnablePersistentIPs: true},
 							)).To(gomega.Succeed())
 						var err error
-						f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+						f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(f.Start()).To(gomega.Succeed())
 
@@ -448,7 +448,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 								EnablePersistentIPs: true},
 							)).To(gomega.Succeed())
 						var err error
-						f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+						f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(f.Start()).To(gomega.Succeed())
 
@@ -499,7 +499,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 								EnablePersistentIPs: true},
 							)).To(gomega.Succeed())
 						var err error
-						f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+						f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(f.Start()).To(gomega.Succeed())
 
@@ -570,7 +570,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 								EnablePersistentIPs: true},
 							)).To(gomega.Succeed())
 						var err error
-						f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+						f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(f.Start()).To(gomega.Succeed())
 
@@ -644,7 +644,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 								EnablePersistentIPs: true},
 							)).To(gomega.Succeed())
 
-						f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+						f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 						gomega.Expect(err).NotTo(gomega.HaveOccurred())
 						gomega.Expect(f.Start()).To(gomega.Succeed())
 
@@ -712,7 +712,7 @@ var _ = ginkgo.Describe("Cluster Controller Manager", func() {
 						IPAMClaimsClient:      fakeipamclaimclient.NewSimpleClientset(),
 						NetworkAttchDefClient: fakenadclient.NewSimpleClientset(),
 					}
-					f, err = factory.NewClusterManagerWatchFactory(fakeClient)
+					f, err = factory.NewClusterManagerWatchFactory(fakeClient, &factory.DefaultObjTransformerConfig{})
 					gomega.Expect(err).NotTo(gomega.HaveOccurred())
 					gomega.Expect(f.Start()).NotTo(gomega.HaveOccurred())
 
