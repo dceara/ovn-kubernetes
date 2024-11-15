@@ -31,16 +31,11 @@ type NodeExtra struct {
 	// Parsed from node annotations.
 	L3GatewayConfig          *L3GatewayConfig                     // OvnNodeL3GatewayConfig
 	GatewayMtuSupport        bool                                 // OvnNodeGatewayMtuSupport
-	MgmtPortDetails          ManagementPortDetails                // OvnNodeManagementPort
 	MgmtPortMacAddressMap    map[string]net.HardwareAddr          // OvnNodeManagementPortMacAddresses
 	ChassisId                string                               // OvnNodeChassisID
-	IfAddr                   *ParsedNodeEgressIPConfiguration     // OvnNodeIfAddr
 	JoinSubnet               []*net.IPNet                         // ovnNodeGRLRPAddr
 	JoinSubnets              map[string]ParsedNodeIPConfiguration // OVNNodeGRLRPAddrs
-	MasqSubnet               []*net.IPNet                         // OvnNodeMasqCIDR
 	HostCIDRs                []string                             // OVNNodeHostCIDRs  TODO: string??
-	SecondaryHostEgressIPs   sets.Set[string]                     // OVNNodeSecondaryHostEgressIPs
-	EgressIPConfiguration    *ParsedNodeEgressIPConfiguration     // cloudEgressIPConfigAnnotationKey
 	ZoneName                 string                               // OvnNodeZoneName
 	HasMigratedZone          bool                                 // OvnNodeMigratedZoneName
 	TransitSwitchPortAddrs   []*net.IPNet                         // ovnTransitSwitchPortAddr
@@ -66,17 +61,11 @@ func NewNodeExtra(node *v1.Node) *NodeExtra {
 	annotationParsingErrors[OvnNodeL3GatewayConfig] = err
 	annotations[OvnNodeL3GatewayConfig] = node.Annotations[OvnNodeL3GatewayConfig]
 
-	pfID, funcID, err := ParseNodeManagementPortAnnotation(node)
-	annotationParsingErrors[OvnNodeManagementPort] = err
-
 	mgmtPortMacAddressMap, err := ParseAllNodeManagementPortMACAddresses(node)
 	annotationParsingErrors[OvnNodeManagementPortMacAddresses] = err
 
 	chassisId, err := ParseNodeChassisIDAnnotation(node)
 	annotationParsingErrors[OvnNodeChassisID] = err
-
-	ifAddr, err := ParseNodePrimaryIfAddr(node)
-	annotationParsingErrors[OvnNodeIfAddr] = err
 
 	joinSubnet, err := ParseNodeGatewayRouterLRPAddrs(node)
 	annotationParsingErrors[OvnNodeGRLRPAddr] = err
@@ -84,18 +73,9 @@ func NewNodeExtra(node *v1.Node) *NodeExtra {
 	joinSubnets, err := ParseAllNodeGatewayRouterJoinNetwork(node)
 	annotationParsingErrors[OVNNodeGRLRPAddrs] = err
 
-	masqSubnet, err := ParseNodeMasqueradeSubnet(node)
-	annotationParsingErrors[OvnNodeMasqCIDR] = err
-
 	hostCIDRs, err := ParseNodeHostCIDRsList(node)
 	annotationParsingErrors[OVNNodeHostCIDRs] = err
 	annotations[OVNNodeHostCIDRs] = node.Annotations[OVNNodeHostCIDRs]
-
-	secondaryHostEgressIPs, err := ParseNodeSecondaryHostEgressIPsAnnotation(node)
-	annotationParsingErrors[OVNNodeSecondaryHostEgressIPs] = err
-
-	egressIPConfiguration, err := ParseCloudEgressIPConfig(node)
-	annotationParsingErrors[CloudEgressIPConfigAnnotationKey] = err
 
 	transitSwitchPortAddrs, err := ParseNodeTransitSwitchPortAddrs(node)
 	annotationParsingErrors[OvnTransitSwitchPortAddr] = err
@@ -113,19 +93,11 @@ func NewNodeExtra(node *v1.Node) *NodeExtra {
 	return &NodeExtra{
 		L3GatewayConfig:   l3GatewayConfig,
 		GatewayMtuSupport: ParseNodeGatewayMTUSupport(node),
-		MgmtPortDetails: ManagementPortDetails{
-			PfId:   pfID,
-			FuncId: funcID,
-		},
 		MgmtPortMacAddressMap:    mgmtPortMacAddressMap,
 		ChassisId:                chassisId,
-		IfAddr:                   ifAddr,
 		JoinSubnet:               joinSubnet,
 		JoinSubnets:              joinSubnets,
-		MasqSubnet:               masqSubnet,
 		HostCIDRs:                hostCIDRs,
-		SecondaryHostEgressIPs:   secondaryHostEgressIPs,
-		EgressIPConfiguration:    egressIPConfiguration,
 		ZoneName:                 GetNodeZone(node),
 		HasMigratedZone:          HasNodeMigratedZone(node),
 		TransitSwitchPortAddrs:   transitSwitchPortAddrs,
@@ -168,23 +140,6 @@ func (ne *NodeExtra) GetNodeHostSubnet(netName string) ([]*net.IPNet, error) {
 	return subnets, nil
 }
 
-func (ne *NodeExtra) GetNodeHostAddrs() ([]string, error) {
-	if err := ne.annotationParsingErrors[OVNNodeHostCIDRs]; err != nil {
-		return nil, err
-	}
-
-	// TODO: copied from ParseNodeHostCIDRsDropNetMask
-	hostAddrs := make([]string, 0, len(ne.HostCIDRs))
-	for _, cidr := range ne.HostCIDRs {
-		ip, _, err := net.ParseCIDR(cidr)
-		if err != nil || ip == nil {
-			return nil, fmt.Errorf("failed to parse node host cidr: %w", err)
-		}
-		hostAddrs = append(hostAddrs, ip.String())
-	}
-	return hostAddrs, nil
-}
-
 func (ne *NodeExtra) GetNodeGatewayRouterJoinAddr() ([]*net.IPNet, error) {
 	if err := ne.annotationParsingErrors[OvnNodeGRLRPAddr]; err != nil {
 		return nil, err
@@ -225,14 +180,6 @@ func (ne *NodeExtra) GetNodeManagementPortMACAddresses(network string) (net.Hard
 	}
 
 	return mgmtPortMacAddress, nil
-}
-
-func (ne *NodeExtra) GetNodePrimaryIfAddr() (*ParsedNodeEgressIPConfiguration, error) {
-	if err := ne.annotationParsingErrors[OvnNodeIfAddr]; err != nil {
-		return nil, err
-	}
-
-	return ne.IfAddr, nil
 }
 
 func (ne *NodeExtra) GetNodeUDNLayer2GRLRPTunnelID(network string) (int, error) {
