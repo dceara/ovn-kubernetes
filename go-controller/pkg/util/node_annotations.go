@@ -247,6 +247,18 @@ func (ne *NodeExtra) GetNodeUDNLayer2GRLRPTunnelID(network string) (int, error) 
 	}
 }
 
+func (ne *NodeExtra) GetNetworkID(network string) (int, error) {
+	if err := ne.annotationParsingErrors[OvnNetworkIDs]; err != nil {
+		return InvalidID, err
+	}
+
+	if networkID, found := ne.NetworkIDs[network]; !found {
+		return InvalidID, fmt.Errorf("missing network id for network '%s'", network)
+	} else {
+		return networkID, nil
+	}
+}
+
 // TODO copied from base_network_controller.go
 // isLocalZoneNode returns true if the node is part of the local zone.
 func (ne *NodeExtra) IsLocalZoneNodeInfo(zone string) bool {
@@ -319,47 +331,69 @@ func NewNodeTransformer() *NodeTransformer {
 	}
 }
 
-func (nt *NodeTransformer) Transform(nodeI interface{}, isDel bool) interface{} {
+func (nt *NodeTransformer) TransformNew(nodeI interface{}, isDel bool) interface{} {
+	node := nodeI.(*v1.Node)
+	return NewNodeExtra(node)
+
+	// uid := node.GetUID()
+	// cacheStale := false
+
+	// nt.cacheLock.RLock()
+	// ne, foundInCache := nt.nodeCache[uid]
+	// nt.cacheLock.RUnlock()
+
+	// if !foundInCache || ne.ResourceVersion != node.GetResourceVersion() {
+	// 	ne = NewNodeExtra(node)
+	// 	cacheStale = true
+	// }
+
+	// if isDel {
+	// 	if foundInCache {
+	// 		nt.cacheLock.Lock()
+	// 		delete(nt.nodeCache, uid)
+	// 		nt.cacheLock.Unlock()
+	// 	}
+	// } else if cacheStale {
+	// 	nt.cacheLock.Lock()
+	// 	nt.nodeCache[uid] = ne
+	// 	nt.cacheLock.Unlock()
+	// }
+	// return ne
+}
+
+func (nt *NodeTransformer) TransformOld(nodeI interface{}) interface{} {
 	if nodeI == nil {
 		return nil
 	}
 
 	node := nodeI.(*v1.Node)
-	uid := node.GetUID()
+	return NewNodeExtra(node)
 
-	nt.cacheLock.Lock()
-	defer nt.cacheLock.Unlock()
-
-	ne, foundInCache := nt.nodeCache[uid]
-	if isDel {
-		if foundInCache {
-			delete(nt.nodeCache, uid)
-		} else {
-			ne = NewNodeExtra(node)
-		}
-	} else {
-		if foundInCache {
-			if ne.ResourceVersion != node.GetResourceVersion() {
-				ne = NewNodeExtra(node)
-				nt.nodeCache[uid] = ne
-			}
-		} else {
-			ne = NewNodeExtra(node)
-			nt.nodeCache[uid] = ne
-		}
-	}
-	return ne
+	// nt.cacheLock.RLock()
+	// if ne, ok := nt.nodeCache[node.GetUID()]; ok {
+	// 	nt.cacheLock.RUnlock()
+	// 	return ne
+	// } else {
+	// 	nt.cacheLock.RUnlock()
+	// 	return NewNodeExtra(node)
+	// }
 }
 
-func (nt *NodeTransformer) Get(nodeUID ktypes.UID) (interface{}, error) {
-	nt.cacheLock.RLock()
-	defer nt.cacheLock.RUnlock()
+//TODO: this causes issues - inconsistent subnets and stuff
+//TODO: just reparse for now
+func (nt *NodeTransformer) Get(nodeI interface{}) (interface{}, error) {
+	node := nodeI.(*v1.Node)
 
-	if ne, ok := nt.nodeCache[nodeUID]; ok {
-		return ne, nil
-	} else {
-		return nil, fmt.Errorf("nodeExtra information for UID %s not found in cache", nodeUID)
-	}
+	return NewNodeExtra(node), nil
+
+	// nt.cacheLock.RLock()
+	// defer nt.cacheLock.RUnlock()
+
+	// if ne, ok := nt.nodeCache[node.GetUID()]; ok {
+	// 	return ne, nil
+	// } else {
+	// 	return nil, errors.NewNotFound(schema.GroupResource{}, node.Name)
+	// }
 }
 
 // This handles the annotations used by the node to pass information about its local

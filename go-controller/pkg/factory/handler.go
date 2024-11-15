@@ -73,8 +73,9 @@ func (h *Handler) kill() bool {
 }
 
 type InformerObjTransformer interface {
-	Transform(obj interface{}, isDel bool) interface{}
-	Get(uid ktypes.UID) (interface{}, error)
+	TransformNew(obj interface{}, isDel bool) interface{}
+	TransformOld(obj interface{}) interface{}
+	Get(obj interface{}) (interface{}, error)
 }
 
 type InformerObjTransformerConfig interface {
@@ -85,11 +86,15 @@ type InformerObjTransformerConfig interface {
 // the original object).
 type DefaultObjTransformer struct{}
 
-func (*DefaultObjTransformer) Transform(obj interface{}, isDel bool) interface{} {
+func (*DefaultObjTransformer) TransformNew(obj interface{}, isDel bool) interface{} {
 	return obj
 }
 
-func (*DefaultObjTransformer) Get(uid ktypes.UID) (interface{}, error) {
+func (*DefaultObjTransformer) TransformOld(obj interface{}) interface{} {
+	return obj
+}
+
+func (*DefaultObjTransformer) Get(obj interface{}) (interface{}, error) {
 	return nil, fmt.Errorf("default object transformer doesn't support Get()")
 }
 
@@ -387,11 +392,13 @@ func (qm *queueMap) releaseQueueMapEntry(key ktypes.NamespacedName, entry *queue
 }
 
 // enqueueEvent adds an event to the appropriate queue for the object
-func (qm *queueMap) enqueueEvent(oldObj, obj interface{}, oType reflect.Type, isDel bool, processFunc func(*event), transform func(obj interface{}, isDel bool) interface{}) {
+func (qm *queueMap) enqueueEvent(oldObj, obj interface{}, oType reflect.Type, isDel bool, processFunc func(*event),
+		transformNew func(obj interface{}, isDel bool) interface{},
+		transformOld func(obj interface{}) interface{}) {
 	key, entry := qm.getQueueMapEntry(oType, obj)
 	event := &event{
-		obj:    transform(obj, isDel),
-		oldObj: transform(oldObj, isDel),
+		obj:    transformNew(obj, isDel),
+		oldObj: transformOld(oldObj),
 		process: func(e *event) {
 			processFunc(e)
 			qm.releaseQueueMapEntry(key, entry, isDel)
@@ -432,7 +439,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 				})
 				metrics.MetricResourceAddLatency.Observe(time.Since(start).Seconds())
 			},
-				i.transformer.Transform)
+				i.transformer.TransformNew,
+				i.transformer.TransformOld,)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			i.queueMap.enqueueEvent(oldObj, newObj, i.oType, false, func(e *event) {
@@ -452,7 +460,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 				})
 				metrics.MetricResourceUpdateLatency.Observe(time.Since(start).Seconds())
 			},
-				i.transformer.Transform)
+				i.transformer.TransformNew,
+				i.transformer.TransformOld,)
 		},
 		DeleteFunc: func(obj interface{}) {
 			realObj, err := ensureObjectOnDelete(obj, expectedOType(i.oType))
@@ -468,7 +477,8 @@ func (i *informer) newFederatedQueuedHandler(numEventQueues uint32) cache.Resour
 				})
 				metrics.MetricResourceDeleteLatency.Observe(time.Since(start).Seconds())
 			},
-				i.transformer.Transform)
+				i.transformer.TransformNew,
+				i.transformer.TransformOld,)
 		},
 	}
 }
@@ -611,7 +621,7 @@ func newInformer(oType reflect.Type, objTransformerConfig InformerObjTransformer
 	}
 	i.initialAddFunc = func(h *Handler, items []interface{}) {
 		for _, item := range items {
-			h.OnAdd(i.transformer.Transform(item, false), false)
+			h.OnAdd(i.transformer.TransformNew(item, false), false)
 		}
 	}
 	_, err = i.inf.AddEventHandler(i.newFederatedHandler())
@@ -646,7 +656,8 @@ func newQueuedInformer(oType reflect.Type, objTransformerConfig InformerObjTrans
 			addsMap.enqueueEvent(nil, obj, i.oType, false, func(e *event) {
 				h.OnAdd(e.obj, false)
 			},
-				i.transformer.Transform)
+				i.transformer.TransformNew,
+				i.transformer.TransformOld,)
 		}
 
 		// Wait until all the object additions have been processed

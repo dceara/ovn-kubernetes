@@ -695,7 +695,7 @@ func (oc *SecondaryLayer2NetworkController) nodeGatewayConfig(ne *util.NodeExtra
 	}
 
 	networkName := oc.GetNetworkName()
-	networkID, err := oc.getNetworkID()
+	networkID, err := ne.GetNetworkID(networkName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get networkID for network %q: %v", networkName, err)
 	}

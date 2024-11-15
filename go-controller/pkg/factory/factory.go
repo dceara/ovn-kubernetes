@@ -1486,7 +1486,7 @@ func (wf *WatchFactory) GetNodeParsed(name string) (interface{}, error) {
 	if node, err := nodeLister.Get(name); err != nil {
 		return nil, err
 	} else {
-		return wf.informers[NodeParsedType].transformer.Get(node.GetUID())
+		return wf.informers[NodeParsedType].transformer.Get(node)
 	}
 }
 
