@@ -265,14 +265,14 @@ func (bnc *BaseNetworkController) getOVNClusterRouterPortToJoinSwitchIfAddrs() (
 // gateway-chassis, which in effect pins the logical switch to the current node in OVN.
 // Otherwise, ovn-controller will flood-fill unrelated datapaths unnecessarily, causing scale
 // problems.
-func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *kapi.Node, hostSubnets []*net.IPNet) error {
-	chassisID, err := util.ParseNodeChassisIDAnnotation(node)
+func (bnc *BaseNetworkController) syncNodeClusterRouterPort(ne *util.NodeExtra, hostSubnets []*net.IPNet) error {
+	chassisID, err := ne.GetChassisID()
 	if err != nil {
 		return err
 	}
 
 	if len(hostSubnets) == 0 {
-		hostSubnets, err = util.ParseNodeHostSubnetAnnotation(node, bnc.GetNetworkName())
+		hostSubnets, err = ne.GetNodeHostSubnet(bnc.GetNetworkName())
 		if err != nil {
 			return err
 		}
@@ -288,7 +288,7 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *kapi.Node, hos
 		}
 	}
 
-	switchName := bnc.GetNetworkScopedName(node.Name)
+	switchName := bnc.GetNetworkScopedName(ne.Node.Name)
 	logicalRouterName := bnc.GetNetworkScopedClusterRouterName()
 	lrpName := types.RouterToSwitchPrefix + switchName
 	lrpNetworks := []string{}
@@ -327,7 +327,7 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *kapi.Node, hos
 		logicalRouterPort, err := libovsdbops.GetLogicalRouterPort(bnc.nbClient, &lrp)
 		if err != nil {
 			return fmt.Errorf("failed to fetch gatewayport %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
+				lrpName, bnc.GetNetworkName(), ne.Node.Name, err)
 		}
 		gatewayPort := logicalRouterPort.UUID
 		p := func(item *nbdb.NAT) bool {
@@ -337,14 +337,14 @@ func (bnc *BaseNetworkController) syncNodeClusterRouterPort(node *kapi.Node, hos
 		nonICConditonalSNATs, err := libovsdbops.FindNATsWithPredicate(bnc.nbClient, p)
 		if err != nil {
 			return fmt.Errorf("failed to fetch conditional NATs %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
+				lrpName, bnc.GetNetworkName(), ne.Node.Name, err)
 		}
 		for _, nat := range nonICConditonalSNATs {
 			nat.GatewayPort = &gatewayPort
 		}
 		if err := libovsdbops.CreateOrUpdateNATs(bnc.nbClient, &logicalRouter, nonICConditonalSNATs...); err != nil {
 			return fmt.Errorf("failed to fetch conditional NATs %s for network %q on node %q, err: %w",
-				lrpName, bnc.GetNetworkName(), node.Name, err)
+				lrpName, bnc.GetNetworkName(), ne.Node.Name, err)
 		}
 	}
 	return nil
@@ -625,8 +625,8 @@ func (bnc *BaseNetworkController) deleteNamespaceLocked(ns string) (*namespaceIn
 	return nsInfo, nil
 }
 
-func (bnc *BaseNetworkController) syncNodeManagementPort(node *kapi.Node, switchName, routerName string, hostSubnets []*net.IPNet) ([]net.IP, error) {
-	macAddress, err := util.ParseNodeManagementPortMACAddresses(node, bnc.GetNetworkName())
+func (bnc *BaseNetworkController) syncNodeManagementPort(ne *util.NodeExtra, switchName, routerName string, hostSubnets []*net.IPNet) ([]net.IP, error) {
+	macAddress, err := ne.GetNodeManagementPortMACAddresses(bnc.GetNetworkName())
 	if err != nil {
 		return nil, err
 	}
@@ -671,7 +671,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *kapi.Node, switch
 
 	// Create this node's management logical port on the node switch
 	logicalSwitchPort := nbdb.LogicalSwitchPort{
-		Name:      bnc.GetNetworkScopedK8sMgmtIntfName(node.Name),
+		Name:      bnc.GetNetworkScopedK8sMgmtIntfName(ne.Node.Name),
 		Addresses: []string{addresses},
 	}
 	sw := nbdb.LogicalSwitch{Name: switchName}
@@ -693,7 +693,7 @@ func (bnc *BaseNetworkController) syncNodeManagementPort(node *kapi.Node, switch
 	}
 
 	if v4Subnet != nil {
-		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(bnc.nbClient, bnc.GetNetworkScopedK8sMgmtIntfName(node.Name), bnc.GetNetworkScopedSwitchName(node.Name), node.Name, v4Subnet); err != nil {
+		if err := libovsdbutil.UpdateNodeSwitchExcludeIPs(bnc.nbClient, bnc.GetNetworkScopedK8sMgmtIntfName(ne.Node.Name), bnc.GetNetworkScopedSwitchName(ne.Node.Name), ne.Node.Name, v4Subnet); err != nil {
 			return nil, err
 		}
 	}
@@ -865,20 +865,20 @@ func (bnc *BaseNetworkController) isLayer2Interconnect() bool {
 	return config.OVNKubernetesFeature.EnableInterconnect && bnc.NetInfo.TopologyType() == types.Layer2Topology
 }
 
-func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNode, newNode *kapi.Node, newNodeIsLocalZone bool, netName string) bool {
+func (bnc *BaseNetworkController) nodeZoneClusterChanged(oldNe, newNe *util.NodeExtra, newNodeIsLocalZone bool, netName string) bool {
 	// Check if the annotations have changed. Use network topology and local params to skip unnecessary checks
 
 	// NodeIDAnnotationChanged and NodeTransitSwitchPortAddrAnnotationChanged affects local and remote nodes
-	if util.NodeIDAnnotationChanged(oldNode, newNode) {
+	if !oldNe.NodeIDAnnotationEqual(newNe) {
 		return true
 	}
 
-	if util.NodeTransitSwitchPortAddrAnnotationChanged(oldNode, newNode) {
+	if !oldNe.TransitSwitchPortAddrAnnotationEqual(newNe) {
 		return true
 	}
 
 	// NodeGatewayRouterLRPAddrsAnnotationChanged would not affect local, nor localnet secondary network
-	if !newNodeIsLocalZone && bnc.NetInfo.TopologyType() != types.LocalnetTopology && joinCIDRChanged(oldNode, newNode, netName) {
+	if !newNodeIsLocalZone && bnc.NetInfo.TopologyType() != types.LocalnetTopology && !oldNe.JoinSubnetEqual(newNe, netName) {
 		return true
 	}
 

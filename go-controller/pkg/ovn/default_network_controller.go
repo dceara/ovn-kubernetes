@@ -891,7 +891,8 @@ func (h *defaultNetworkControllerEventHandler) UpdateResource(oldObj, newObj int
 		// |                    |                   |                                                 |
 		// |--------------------+-------------------+-------------------------------------------------+
 		newNodeIsLocalZoneNode := h.oc.isLocalZoneNode(newNode)
-		zoneClusterChanged := h.oc.nodeZoneClusterChanged(oldNode, newNode, newNodeIsLocalZoneNode, types.DefaultNetworkName)
+		//TODO
+		zoneClusterChanged := h.oc.nodeZoneClusterChanged(util.NewNodeExtra(oldNode), util.NewNodeExtra(newNode), newNodeIsLocalZoneNode, types.DefaultNetworkName)
 		nodeSubnetChanged := nodeSubnetChanged(oldNode, newNode, types.DefaultNetworkName)
 		var aggregatedErrors []error
 		if newNodeIsLocalZoneNode {

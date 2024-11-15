@@ -215,16 +215,16 @@ func (zic *ZoneInterconnectHandler) ensureTransitSwitch(nodes []*corev1.Node) er
 
 // AddLocalZoneNode creates the interconnect resources in OVN NB DB for the local zone node.
 // See createLocalZoneNodeResources() below for more details.
-func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
-	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", node.Name, zic.GetNetworkName())
-	nodeID := util.GetNodeID(node)
+func (zic *ZoneInterconnectHandler) AddLocalZoneNode(ne *util.NodeExtra) error {
+	klog.Infof("Creating interconnect resources for local zone node %s for the network %s", ne.Node.Name, zic.GetNetworkName())
+	nodeID := ne.NodeID
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
-		return fmt.Errorf("failed to get node id for node - %s", node.Name)
+		return fmt.Errorf("failed to get node id for node - %s", ne.Node.Name)
 	}
 
-	if err := zic.createLocalZoneNodeResources(node, nodeID); err != nil {
-		return fmt.Errorf("creating interconnect resources for local zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
+	if err := zic.createLocalZoneNodeResources(ne, nodeID); err != nil {
+		return fmt.Errorf("creating interconnect resources for local zone node %s for the network %s failed : err - %w", ne.Node.Name, zic.GetNetworkName(), err)
 	}
 
 	return nil
@@ -232,34 +232,34 @@ func (zic *ZoneInterconnectHandler) AddLocalZoneNode(node *corev1.Node) error {
 
 // AddRemoteZoneNode creates the interconnect resources in OVN NBDB and SBDB for the remote zone node.
 // // See createRemoteZoneNodeResources() below for more details.
-func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(node *corev1.Node) error {
+func (zic *ZoneInterconnectHandler) AddRemoteZoneNode(ne *util.NodeExtra) error {
 	start := time.Now()
-	klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", node.Name, zic.GetNetworkName())
+	klog.Infof("Creating interconnect resources for remote zone node %s for the network %s", ne.Node.Name, zic.GetNetworkName())
 
-	nodeID := util.GetNodeID(node)
+	nodeID := ne.NodeID
 	if nodeID == -1 {
 		// Don't consider this node as cluster-manager has not allocated node id yet.
-		return fmt.Errorf("failed to get node id for node - %s", node.Name)
+		return fmt.Errorf("failed to get node id for node - %s", ne.Node.Name)
 	}
 
 	// Get the chassis id.
-	chassisId, err := util.ParseNodeChassisIDAnnotation(node)
+	chassisId, err := ne.GetChassisID()
 	if err != nil {
-		return fmt.Errorf("failed to parse node chassis-id for node - %s, error: %w", node.Name, types.NewSuppressedError(err))
+		return fmt.Errorf("failed to parse node chassis-id for node - %s, error: %w", ne.Node.Name, types.NewSuppressedError(err))
 	}
 
-	if err := zic.createRemoteZoneNodeResources(node, nodeID, chassisId); err != nil {
-		return fmt.Errorf("creating interconnect resources for remote zone node %s for the network %s failed : err - %w", node.Name, zic.GetNetworkName(), err)
+	if err := zic.createRemoteZoneNodeResources(ne, nodeID, chassisId); err != nil {
+		return fmt.Errorf("creating interconnect resources for remote zone node %s for the network %s failed : err - %w", ne.Node.Name, zic.GetNetworkName(), err)
 	}
-	klog.Infof("Creating Interconnect resources for node %v took: %s", node.Name, time.Since(start))
+	klog.Infof("Creating Interconnect resources for node %v took: %s", ne.Node.Name, time.Since(start))
 	return nil
 }
 
 // DeleteNode deletes the local zone node or remote zone node resources
-func (zic *ZoneInterconnectHandler) DeleteNode(node *corev1.Node) error {
-	klog.Infof("Deleting interconnect resources for the node %s for the network %s", node.Name, zic.GetNetworkName())
+func (zic *ZoneInterconnectHandler) DeleteNode(ne *util.NodeExtra) error {
+	klog.Infof("Deleting interconnect resources for the node %s for the network %s", ne.Node.Name, zic.GetNetworkName())
 
-	return zic.cleanupNode(node.Name)
+	return zic.cleanupNode(ne.Node.Name)
 }
 
 // SyncNodes ensures a transit switch exists and cleans up the interconnect
@@ -384,10 +384,10 @@ func (zic *ZoneInterconnectHandler) addTransitSwitchConfig(sw *nbdb.LogicalSwitc
 //   - creates a logical router port in the ovn_cluster_router with the name - <network_name>.rtots-<node_name> and connects
 //     to the node logical switch port in the transit switch
 //   - remove any stale static routes in the ovn_cluster_router for the node
-func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.Node, nodeID int) error {
-	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(ne *util.NodeExtra, nodeID int) error {
+	nodeTransitSwitchPortIPs, err := ne.GetTransitSwitchPortAddrs()
 	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
-		return fmt.Errorf("failed to get the node transit switch port ips for node %s: %w", node.Name, err)
+		return fmt.Errorf("failed to get the node transit switch port ips for node %s: %w", ne.Node.Name, err)
 	}
 
 	transitRouterPortMac := util.IPAddrToHWAddr(nodeTransitSwitchPortIPs[0].IP)
@@ -397,7 +397,7 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 	}
 
 	// Connect transit switch to the cluster router by creating a pair of logical switch port - logical router port
-	logicalRouterPortName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + node.Name)
+	logicalRouterPortName := zic.GetNetworkScopedName(types.RouterToTransitSwitchPrefix + ne.Node.Name)
 	logicalRouterPort := nbdb.LogicalRouterPort{
 		Name:     logicalRouterPortName,
 		MAC:      transitRouterPortMac.String(),
@@ -411,7 +411,7 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 	}
 
 	if err := libovsdbops.CreateOrUpdateLogicalRouterPort(zic.nbClient, &logicalRouter, &logicalRouterPort, nil); err != nil {
-		return fmt.Errorf("failed to create/update cluster router %s to add transit switch port %s for the node %s: %w", zic.networkClusterRouterName, logicalRouterPortName, node.Name, err)
+		return fmt.Errorf("failed to create/update cluster router %s to add transit switch port %s for the node %s: %w", zic.networkClusterRouterName, logicalRouterPortName, ne.Node.Name, err)
 	}
 
 	lspOptions := map[string]string{
@@ -421,9 +421,9 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 
 	// Store the node name in the external_ids column for book keeping
 	externalIDs := map[string]string{
-		"node": node.Name,
+		"node": ne.Node.Name,
 	}
-	err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+node.Name),
+	err = zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix+ne.Node.Name),
 		lportTypeRouter, []string{lportTypeRouterAddr}, lspOptions, externalIDs)
 	if err != nil {
 		return err
@@ -431,7 +431,7 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 
 	// Its possible that node is moved from a remote zone to the local zone. Check and delete the remote zone routes
 	// for this node as it's no longer needed.
-	return zic.deleteLocalNodeStaticRoutes(node, nodeTransitSwitchPortIPs)
+	return zic.deleteLocalNodeStaticRoutes(ne, nodeTransitSwitchPortIPs)
 }
 
 // createRemoteZoneNodeResources creates the remote zone node resources
@@ -441,8 +441,8 @@ func (zic *ZoneInterconnectHandler) createLocalZoneNodeResources(node *corev1.No
 //     if the node name is ovn-worker and the network name is blue, the logical port name would be - blue.tstor.ovn-worker
 //   - binds the remote port to the node remote chassis in SBDB
 //   - adds static routes for the remote node via the remote port ip in the ovn_cluster_router
-func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.Node, nodeID int, chassisId string) error {
-	nodeTransitSwitchPortIPs, err := util.ParseNodeTransitSwitchPortAddrs(node)
+func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(ne *util.NodeExtra, nodeID int, chassisId string) error {
+	nodeTransitSwitchPortIPs, err := ne.GetTransitSwitchPortAddrs()
 	if err != nil || len(nodeTransitSwitchPortIPs) == 0 {
 		err = fmt.Errorf("failed to get the node transit switch port IP addresses : %w", err)
 		if util.IsAnnotationNotSetError(err) {
@@ -464,25 +464,25 @@ func (zic *ZoneInterconnectHandler) createRemoteZoneNodeResources(node *corev1.N
 
 	lspOptions := map[string]string{
 		"requested-tnl-key": strconv.Itoa(nodeID),
-		"requested-chassis": node.Name,
+		"requested-chassis": ne.Node.Name,
 	}
 	// Store the node name in the external_ids column for book keeping
 	externalIDs := map[string]string{
-		"node": node.Name,
+		"node": ne.Node.Name,
 	}
 
-	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + node.Name)
+	remotePortName := zic.GetNetworkScopedName(types.TransitSwitchToRouterPrefix + ne.Node.Name)
 	if err := zic.addNodeLogicalSwitchPort(zic.networkTransitSwitchName, remotePortName, lportTypeRemote, []string{remotePortAddr}, lspOptions, externalIDs); err != nil {
 		return err
 	}
 
-	if err := zic.addRemoteNodeStaticRoutes(node, nodeTransitSwitchPortIPs); err != nil {
+	if err := zic.addRemoteNodeStaticRoutes(ne, nodeTransitSwitchPortIPs); err != nil {
 		return err
 	}
 
 	// Cleanup the logical router port connecting to the transit switch for the remote node (if present)
 	// Cleanup would be required when a local zone node moves to a remote zone.
-	return zic.cleanupNodeClusterRouterPort(node.Name)
+	return zic.cleanupNodeClusterRouterPort(ne.Node.Name)
 }
 
 func (zic *ZoneInterconnectHandler) addNodeLogicalSwitchPort(logicalSwitchName, portName, portType string, addresses []string, options, externalIDs map[string]string) error {
@@ -572,11 +572,11 @@ func (zic *ZoneInterconnectHandler) cleanupNodeTransitSwitchPort(nodeName string
 // Then the below static routes are added
 // ip4.dst == 10.244.0.0/24 , nexthop = 100.88.0.2
 // ip4.dst == 100.64.0.2/16 , nexthop = 100.88.0.2  (only for default primary network)
-func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node, nodeTransitSwitchPortIPs []*net.IPNet) error {
+func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(ne *util.NodeExtra, nodeTransitSwitchPortIPs []*net.IPNet) error {
 	addRoute := func(prefix, nexthop string) error {
 		logicalRouterStaticRoute := nbdb.LogicalRouterStaticRoute{
 			ExternalIDs: map[string]string{
-				"ic-node": node.Name,
+				"ic-node": ne.Node.Name,
 			},
 			Nexthop:  nexthop,
 			IPPrefix: prefix,
@@ -584,7 +584,7 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
 				lrsr.Nexthop == nexthop &&
-				lrsr.ExternalIDs["ic-node"] == node.Name
+				lrsr.ExternalIDs["ic-node"] == ne.Node.Name
 		}
 		if err := libovsdbops.CreateOrReplaceLogicalRouterStaticRouteWithPredicate(zic.nbClient, zic.networkClusterRouterName, &logicalRouterStaticRoute, p); err != nil {
 			return fmt.Errorf("failed to create static route: %w", err)
@@ -592,9 +592,9 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		return nil
 	}
 
-	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, zic.GetNetworkName())
+	nodeSubnets, err := ne.GetNodeHostSubnet(zic.GetNetworkName())
 	if err != nil {
-		err = fmt.Errorf("failed to parse node %s subnets annotation %w", node.Name, err)
+		err = fmt.Errorf("failed to parse node %s subnets annotation %w", ne.Node.Name, err)
 		if util.IsAnnotationNotSetError(err) {
 			// remote node may not have the annotation yet, suppress it
 			return types.NewSuppressedError(err)
@@ -618,15 +618,15 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 		return nil
 	}
 
-	nodeGRPIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, zic.GetNetworkName())
+	nodeGRPIPs, err := ne.GetNodeGatewayRouterJoinAddrs(zic.GetNetworkName())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// FIXME(tssurya): This is present for backwards compatibility
 			// Remove me a few months from now
 			var err1 error
-			nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
+			nodeGRPIPs, err = ne.GetNodeGatewayRouterJoinAddr()
 			if err1 != nil {
-				err1 = fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
+				err1 = fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", ne.Node.Name, err1)
 				if util.IsAnnotationNotSetError(err1) {
 					return types.NewSuppressedError(err1)
 				}
@@ -647,12 +647,12 @@ func (zic *ZoneInterconnectHandler) addRemoteNodeStaticRoutes(node *corev1.Node,
 }
 
 // deleteLocalNodeStaticRoutes deletes the static routes added by the function addRemoteNodeStaticRoutes
-func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Node, nodeTransitSwitchPortIPs []*net.IPNet) error {
+func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(ne *util.NodeExtra, nodeTransitSwitchPortIPs []*net.IPNet) error {
 	deleteRoute := func(prefix, nexthop string) error {
 		p := func(lrsr *nbdb.LogicalRouterStaticRoute) bool {
 			return lrsr.IPPrefix == prefix &&
 				lrsr.Nexthop == nexthop &&
-				lrsr.ExternalIDs["ic-node"] == node.Name
+				lrsr.ExternalIDs["ic-node"] == ne.Node.Name
 		}
 		if err := libovsdbops.DeleteLogicalRouterStaticRoutesWithPredicate(zic.nbClient, zic.networkClusterRouterName, p); err != nil {
 			return fmt.Errorf("failed to delete static route: %w", err)
@@ -660,9 +660,9 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 		return nil
 	}
 
-	nodeSubnets, err := util.ParseNodeHostSubnetAnnotation(node, zic.GetNetworkName())
+	nodeSubnets, err := ne.GetNodeHostSubnet(zic.GetNetworkName())
 	if err != nil {
-		return fmt.Errorf("failed to parse node %s subnets annotation %w", node.Name, err)
+		return fmt.Errorf("failed to parse node %s subnets annotation %w", ne.Node.Name, err)
 	}
 
 	nodeSubnetStaticRoutes := zic.getStaticRoutes(nodeSubnets, nodeTransitSwitchPortIPs, false)
@@ -680,15 +680,15 @@ func (zic *ZoneInterconnectHandler) deleteLocalNodeStaticRoutes(node *corev1.Nod
 	}
 
 	// Clear the routes connecting to the GW Router for the default network
-	nodeGRPIPs, err := util.ParseNodeGatewayRouterJoinAddrs(node, zic.GetNetworkName())
+	nodeGRPIPs, err := ne.GetNodeGatewayRouterJoinAddrs(zic.GetNetworkName())
 	if err != nil {
 		if util.IsAnnotationNotSetError(err) {
 			// FIXME(tssurya): This is present for backwards compatibility
 			// Remove me a few months from now
 			var err1 error
-			nodeGRPIPs, err1 = util.ParseNodeGatewayRouterLRPAddrs(node)
+			nodeGRPIPs, err1 = ne.GetNodeGatewayRouterJoinAddr()
 			if err1 != nil {
-				return fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", node.Name, err1)
+				return fmt.Errorf("failed to parse node %s Gateway router LRP Addrs annotation %w", ne.Node.Name, err1)
 			}
 		}
 	}

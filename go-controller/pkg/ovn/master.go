@@ -130,7 +130,8 @@ func (oc *DefaultNetworkController) newClusterRouter() (*nbdb.LogicalRouter, err
 }
 
 func (oc *DefaultNetworkController) syncNodeManagementPortDefault(node *kapi.Node, switchName string, hostSubnets []*net.IPNet) error {
-	mgmtPortIPs, err := oc.syncNodeManagementPort(node, switchName, oc.GetNetworkScopedClusterRouterName(), hostSubnets)
+	//TODO dceara
+	mgmtPortIPs, err := oc.syncNodeManagementPort(util.NewNodeExtra(node), switchName, oc.GetNetworkScopedClusterRouterName(), hostSubnets)
 	if err == nil {
 		return oc.setupUDNACLs(mgmtPortIPs)
 	}
@@ -167,7 +168,7 @@ func (oc *DefaultNetworkController) syncDefaultGatewayLogicalNetwork(
 	}
 
 	return oc.newGatewayManager(node.Name).syncGatewayLogicalNetwork(
-		node,
+		util.NewNodeExtra(node),
 		l3GatewayConfig,
 		hostSubnets,
 		hostAddrs,
@@ -530,6 +531,9 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *kapi.Node, nSy
 	var errs []error
 	var err error
 
+	//TODO
+	nodeExtra := util.NewNodeExtra(node)
+
 	_, _ = oc.localZoneNodes.LoadOrStore(node.Name, true)
 
 	if noHostSubnet := util.NoHostSubnet(node); noHostSubnet {
@@ -574,7 +578,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *kapi.Node, nSy
 	}
 
 	if nSyncs.syncClusterRouterPort {
-		if err = oc.syncNodeClusterRouterPort(node, nil); err != nil {
+		if err = oc.syncNodeClusterRouterPort(util.NewNodeExtra(node), nil); err != nil {
 			errs = append(errs, err)
 			oc.nodeClusterRouterPortFailed.Store(node.Name, true)
 		} else {
@@ -657,7 +661,7 @@ func (oc *DefaultNetworkController) addUpdateLocalNodeEvent(node *kapi.Node, nSy
 		} else {
 			// Call zone IC handler's AddLocalZoneNode function to create
 			// interconnect resources in the OVN Northbound db for this local zone node.
-			if err := oc.zoneICHandler.AddLocalZoneNode(node); err != nil {
+			if err := oc.zoneICHandler.AddLocalZoneNode(nodeExtra); err != nil {
 				errs = append(errs, err)
 				oc.syncZoneICFailed.Store(node.Name, true)
 			} else {
@@ -675,6 +679,10 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *kapi.Node, sy
 		return nil
 	}
 	start := time.Now()
+
+	//TODO
+	nodeExtra := util.NewNodeExtra(node)
+
 	// Check if the remote node is present in the local zone nodes.  If its present
 	// it means it moved from this controller zone to other remote zone. Cleanup the node
 	// from the local zone cache.
@@ -702,7 +710,7 @@ func (oc *DefaultNetworkController) addUpdateRemoteNodeEvent(node *kapi.Node, sy
 		// Call zone IC handler's AddRemoteZoneNode function to create
 		// interconnect resources in the OVN NBDB for this remote zone node.
 		// Also, create the remote port binding in SBDB
-		if err = oc.zoneICHandler.AddRemoteZoneNode(node); err != nil {
+		if err = oc.zoneICHandler.AddRemoteZoneNode(nodeExtra); err != nil {
 			err = fmt.Errorf("adding or updating remote node IC resources %s failed, err - %w", node.Name, err)
 			oc.syncZoneICFailed.Store(node.Name, true)
 		} else {
@@ -735,8 +743,11 @@ func (oc *DefaultNetworkController) deleteOVNNodeEvent(node *kapi.Node) error {
 		return err
 	}
 
+	//TODO
+	nodeExtra := util.NewNodeExtra(node)
+
 	if config.OVNKubernetesFeature.EnableInterconnect {
-		if err := oc.zoneICHandler.DeleteNode(node); err != nil {
+		if err := oc.zoneICHandler.DeleteNode(nodeExtra); err != nil {
 			return err
 		}
 		if !oc.isLocalZoneNode(node) {

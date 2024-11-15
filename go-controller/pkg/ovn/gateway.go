@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"golang.org/x/exp/maps"
-	kapi "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -1235,7 +1234,7 @@ func (gw *GatewayManager) containsJoinIP(ip net.IP) bool {
 }
 
 func (gw *GatewayManager) syncGatewayLogicalNetwork(
-	node *kapi.Node,
+	ne *util.NodeExtra,
 	l3GatewayConfig *util.L3GatewayConfig,
 	hostSubnets []*net.IPNet,
 	hostAddrs []string,
@@ -1245,10 +1244,8 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 	ovnClusterLRPToJoinIfAddrs []*net.IPNet,
 	externalIPs []net.IP,
 ) error {
-	enableGatewayMTU := util.ParseNodeGatewayMTUSupport(node)
-
 	err := gw.GatewayInit(
-		node.Name,
+		ne.Node.Name,
 		clusterSubnets,
 		hostSubnets,
 		l3GatewayConfig,
@@ -1256,7 +1253,7 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 		gwLRPIPs,
 		ovnClusterLRPToJoinIfAddrs,
 		externalIPs,
-		enableGatewayMTU,
+		ne.GatewayMtuSupport,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to init gateway for network %q: %v", gw.netInfo.GetNetworkName(), err)
@@ -1280,11 +1277,12 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 			return fmt.Errorf("failed to extract the host IP addrs for network %q: %v", gw.netInfo.GetNetworkName(), err)
 		}
 		pbrMngr := gatewayrouter.NewPolicyBasedRoutesManager(gw.nbClient, routerName, gw.netInfo)
-		if err := pbrMngr.AddSameNodeIPPolicy(node.Name, mgmtIfAddr.IP.String(), l3GatewayConfigIP, relevantHostIPs); err != nil {
+		if err := pbrMngr.AddSameNodeIPPolicy(ne.Node.Name, mgmtIfAddr.IP.String(), l3GatewayConfigIP, relevantHostIPs); err != nil {
 			return fmt.Errorf("failed to configure the policy based routes for network %q: %v", gw.netInfo.GetNetworkName(), err)
 		}
 		if gw.netInfo.TopologyType() == types.Layer2Topology && config.Gateway.Mode == config.GatewayModeLocal {
-			if err := pbrMngr.AddHostCIDRPolicy(node, mgmtIfAddr.IP.String(), subnet.String()); err != nil {
+			//TODO dceara: optimize this pass ne
+			if err := pbrMngr.AddHostCIDRPolicy(ne.Node, mgmtIfAddr.IP.String(), subnet.String()); err != nil {
 				return fmt.Errorf("failed to configure the hostCIDR policy for L2 network %q on local gateway: %v",
 					gw.netInfo.GetNetworkName(), err)
 			}
@@ -1296,7 +1294,7 @@ func (gw *GatewayManager) syncGatewayLogicalNetwork(
 
 // syncNodeGateway ensures a node's gateway router is configured according to the L3 config and host subnets
 func (gw *GatewayManager) syncNodeGateway(
-	node *kapi.Node,
+	ne *util.NodeExtra,
 	l3GatewayConfig *util.L3GatewayConfig,
 	hostSubnets []*net.IPNet,
 	hostAddrs []string,
@@ -1307,11 +1305,11 @@ func (gw *GatewayManager) syncNodeGateway(
 ) error {
 	if l3GatewayConfig.Mode == config.GatewayModeDisabled {
 		if err := gw.Cleanup(); err != nil {
-			return fmt.Errorf("error cleaning up gateway for node %s: %v", node.Name, err)
+			return fmt.Errorf("error cleaning up gateway for node %s: %v", ne.Node.Name, err)
 		}
 	} else if hostSubnets != nil {
 		if err := gw.syncGatewayLogicalNetwork(
-			node,
+			ne,
 			l3GatewayConfig,
 			hostSubnets,
 			hostAddrs,
@@ -1321,7 +1319,7 @@ func (gw *GatewayManager) syncNodeGateway(
 			joinSwitchIPs,
 			externalIPs,
 		); err != nil {
-			return fmt.Errorf("error creating gateway for node %s: %v", node.Name, err)
+			return fmt.Errorf("error creating gateway for node %s: %v", ne.Node.Name, err)
 		}
 	}
 	return nil

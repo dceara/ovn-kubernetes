@@ -510,7 +510,7 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 				oc.gatewaysFailed.Store(node.Name, true)
 			} else {
 				if err := gwManager.syncNodeGateway(
-					node,
+					util.NewNodeExtra(node),
 					gwConfig.config,
 					gwConfig.hostSubnets,
 					nil,
@@ -543,7 +543,8 @@ func (oc *SecondaryLayer2NetworkController) addUpdateLocalNodeEvent(node *corev1
 			for _, subnet := range oc.Subnets() {
 				hostSubnets = append(hostSubnets, subnet.CIDR)
 			}
-			if _, err := oc.syncNodeManagementPort(node, oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch), oc.GetNetworkScopedGWRouterName(node.Name), hostSubnets); err != nil {
+			//TODO dceara
+			if _, err := oc.syncNodeManagementPort(util.NewNodeExtra(node), oc.GetNetworkScopedSwitchName(types.OVNLayer2Switch), oc.GetNetworkScopedGWRouterName(node.Name), hostSubnets); err != nil {
 				errs = append(errs, err)
 				oc.mgmtPortFailed.Store(node.Name, true)
 			} else {
@@ -660,7 +661,7 @@ func (oc *SecondaryLayer2NetworkController) deleteNodeEvent(node *corev1.Node) e
 // which are leaving via UDN's mpX interface to the UDN's masqueradeIP.
 func (oc *SecondaryLayer2NetworkController) addUDNClusterSubnetEgressSNAT(localPodSubnets []*net.IPNet, routerName string, node *kapi.Node) error {
 	outputPort := types.GWRouterToJoinSwitchPrefix + routerName
-	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, node)
+	nats, err := oc.buildUDNEgressSNAT(localPodSubnets, outputPort, util.NewNodeExtra(node))
 	if err != nil {
 		return err
 	}

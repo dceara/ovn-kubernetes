@@ -806,7 +806,7 @@ func (oc *BaseSecondaryNetworkController) getNetworkID() (int, error) {
 // buildUDNEgressSNAT is used to build the conditional SNAT required on L3 and L2 UDNs to
 // steer traffic correctly via mp0 when leaving OVN to the host
 func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets []*net.IPNet, outputPort string,
-	node *kapi.Node) ([]*nbdb.NAT, error) {
+	ne *util.NodeExtra) ([]*nbdb.NAT, error) {
 	if len(localPodSubnets) == 0 {
 		return nil, nil // nothing to do
 	}
@@ -817,10 +817,10 @@ func (bsnc *BaseSecondaryNetworkController) buildUDNEgressSNAT(localPodSubnets [
 	if err != nil {
 		return nil, fmt.Errorf("failed to get networkID for network %q: %v", bsnc.GetNetworkName(), err)
 	}
-	dstMac, err := util.ParseNodeManagementPortMACAddresses(node, bsnc.GetNetworkName())
+	dstMac, err := ne.GetNodeManagementPortMACAddresses(bsnc.GetNetworkName())
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse mac address annotation for network %q on node %q, err: %w",
-			bsnc.GetNetworkName(), node.Name, err)
+			bsnc.GetNetworkName(), ne.Node.Name, err)
 	}
 	extIDs := map[string]string{
 		types.NetworkExternalID:  bsnc.GetNetworkName(),
