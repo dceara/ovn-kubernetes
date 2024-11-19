@@ -7,6 +7,11 @@ import (
 	"strings"
 	"time"
 
+	userdefinednodeapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1"
+	userdefinednodeclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1/apis/clientset/versioned"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/util/retry"
+
 	v1 "k8s.io/api/core/v1"
 	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/klog/v2"
@@ -51,9 +56,10 @@ type UserDefinedNetworkGateway struct {
 	// stores the networkID of this network
 	networkID int
 	// node that its programming things on
-	node          *v1.Node
-	nodeLister    listers.NodeLister
-	kubeInterface kube.Interface
+	node             *v1.Node
+	nodeLister       listers.NodeLister
+	kubeInterface    kube.Interface
+	udnNodeInterface userdefinednodeclientset.Interface
 	// vrf manager that creates and manages vrfs for all UDNs
 	// used with a lock since its shared between all network controllers
 	vrfManager *vrfmanager.Controller
@@ -192,7 +198,7 @@ func setBridgeNetworkOfPorts(bridge *bridgeConfiguration, netName string) error 
 }
 
 func NewUserDefinedNetworkGateway(netInfo util.NetInfo, networkID int, node *v1.Node, nodeLister listers.NodeLister,
-	kubeInterface kube.Interface, vrfManager *vrfmanager.Controller, ruleManager *iprulemanager.Controller,
+	kubeInterface kube.Interface, udnInterface userdefinednodeclientset.Interface, vrfManager *vrfmanager.Controller, ruleManager *iprulemanager.Controller,
 	defaultNetworkGateway Gateway) (*UserDefinedNetworkGateway, error) {
 	// Generate a per network conntrack mark and masquerade IPs to be used for egress traffic.
 	var (
@@ -226,6 +232,7 @@ func NewUserDefinedNetworkGateway(netInfo util.NetInfo, networkID int, node *v1.
 		node:          node,
 		nodeLister:    nodeLister,
 		kubeInterface: kubeInterface,
+		udnNodeInterface: udnInterface,
 		vrfManager:    vrfManager,
 		masqCTMark:    masqCTMark,
 		pktMark:       pktMark,
@@ -284,6 +291,29 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 	return nft.Run(context.TODO(), tx)
 }
 
+func (udng *UserDefinedNetworkGateway) updateUDNNodeMAC(macAddress net.HardwareAddr) error {
+	resultErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		udnNodes, err := udng.watchFactory.UserDefinedNodeInformer().Informer().GetIndexer().Index("byNodeAndNetwork", fmt.Sprintf("%d-%s", udng.networkID, udng.node.Name))
+		if err != nil {
+			return fmt.Errorf("failed when querying index for udnNode: %w", err)
+		}
+		if len(udnNodes) != 1 {
+			return fmt.Errorf("expected one udnNode, found %d", len(udnNodes))
+		}
+		cnode := udnNodes[0].(*userdefinednodeapi.UDNNode)
+		cnode.Spec.ManagementPortMACAddress = macAddress.String()
+		_, err = udng.udnNodeInterface.K8sV1().UDNNodes().Update(context.TODO(), cnode, metav1.UpdateOptions{})
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if resultErr != nil {
+		return fmt.Errorf("failed to update node %s annotation: %w", udng.node.Name, resultErr)
+	}
+	return nil
+}
+
 // AddNetwork will be responsible to create all plumbings
 // required by this UDN on the gateway side
 func (udng *UserDefinedNetworkGateway) AddNetwork() error {
@@ -309,8 +339,8 @@ func (udng *UserDefinedNetworkGateway) AddNetwork() error {
 	if err = udng.vrfManager.AddVRFRoutes(vrfDeviceName, routes); err != nil {
 		return fmt.Errorf("could not add VRF %s routes for network %s, err: %v", vrfDeviceName, udng.GetNetworkName(), err)
 	}
-	if err := util.UpdateNodeManagementPortMACAddressesWithRetry(udng.node, udng.nodeLister, udng.kubeInterface, macAddress, udng.GetNetworkName()); err != nil {
-		return fmt.Errorf("unable to update mac address annotation for node %s, for network %s, err: %w", udng.node.Name, udng.GetNetworkName(), err)
+	if err = udng.updateUDNNodeMAC(macAddress); err != nil {
+		return err
 	}
 	// create the iprules for this network
 	udnReplyIPRules, err := udng.constructUDNVRFIPRules(vrfTableId)
