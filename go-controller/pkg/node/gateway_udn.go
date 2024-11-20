@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	userdefinednodeapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1"
 	userdefinednodeclientset "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1/apis/clientset/versioned"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -293,16 +292,13 @@ func (udng *UserDefinedNetworkGateway) addMarkChain() error {
 
 func (udng *UserDefinedNetworkGateway) updateUDNNodeMAC(macAddress net.HardwareAddr) error {
 	resultErr := retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		udnNodes, err := udng.watchFactory.UserDefinedNodeInformer().Informer().GetIndexer().Index("byNodeAndNetwork", fmt.Sprintf("%d-%s", udng.networkID, udng.node.Name))
+		udnNode, err := udng.watchFactory.GetUDNNodeByLabels(udng.node.Name, udng.GetNetworkName())
 		if err != nil {
-			return fmt.Errorf("failed when querying index for udnNode: %w", err)
+			return err
 		}
-		if len(udnNodes) != 1 {
-			return fmt.Errorf("expected one udnNode, found %d", len(udnNodes))
-		}
-		cnode := udnNodes[0].(*userdefinednodeapi.UDNNode)
+		cnode := *udnNode
 		cnode.Spec.ManagementPortMACAddress = macAddress.String()
-		_, err = udng.udnNodeInterface.K8sV1().UDNNodes().Update(context.TODO(), cnode, metav1.UpdateOptions{})
+		_, err = udng.udnNodeInterface.K8sV1().UDNNodes().Update(context.TODO(), &cnode, metav1.UpdateOptions{})
 		if err != nil {
 			return err
 		}
@@ -488,10 +484,22 @@ func (udng *UserDefinedNetworkGateway) getLocalSubnets() ([]*net.IPNet, error) {
 
 	// fetch subnets which we will use to get management port IP(s)
 	if udng.TopologyType() == types.Layer3Topology {
-		networkLocalSubnets, err = util.ParseNodeHostSubnetAnnotation(udng.node, udng.GetNetworkName())
+		udnNode, err := udng.watchFactory.GetUDNNodeByLabels(udng.node.Name, udng.GetNetworkName())
 		if err != nil {
 			return nil, fmt.Errorf("waiting for node %s to start, no annotation found on node for network %s: %w",
 				udng.node.Name, udng.GetNetworkName(), err)
+		}
+		if len(udnNode.Spec.NodeSubnets) == 0 {
+			return fmt.Errorf("subnets are empty for UDN Node: %s, for node: %s, network %s",
+				udnNode.Name, udng.node.Name, udng.GetNetworkName())
+		}
+		for _, subnet := range udnNode.Spec.NodeSubnets {
+			_, n, err := net.ParseCIDR(string(subnet))
+			if err != nil {
+				return fmt.Errorf("failed to parse CIDR %q for node %s, network %s: %w",
+					subnet, udng.node.Name, udng.GetNetworkName(), err)
+			}
+			networkLocalSubnets = append(networkLocalSubnets, n)
 		}
 	} else if udng.TopologyType() == types.Layer2Topology {
 		// NOTE: We don't support L2 networks without subnets as primary UDNs
