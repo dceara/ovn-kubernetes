@@ -83,6 +83,8 @@ type NodeWatchFactory interface {
 	GetUDNNode(udnNodeName string) (*userdefinednodeapi.UDNNode, error)
 	GetUDNNodes(networkName string) ([]*userdefinednodeapi.UDNNode, error)
 	GetUDNNodeByLabels(nodeName, networkName string) (*userdefinednodeapi.UDNNode, error)
+
+	ShallowClone() *WatchFactory
 }
 
 type Shutdownable interface {
