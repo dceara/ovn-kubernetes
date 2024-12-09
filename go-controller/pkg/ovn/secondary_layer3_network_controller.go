@@ -3,11 +3,12 @@ package ovn
 import (
 	"context"
 	"fmt"
-	"k8s.io/apimachinery/pkg/labels"
 	"net"
 	"reflect"
 	"sync"
 	"time"
+
+	"k8s.io/apimachinery/pkg/labels"
 
 	userdefinednodeapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1"
 
@@ -15,7 +16,6 @@ import (
 
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/allocator/pod"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/config"
-	userdefinednodeapi "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/crd/udnnode/v1"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/factory"
 	"github.com/ovn-org/ovn-kubernetes/go-controller/pkg/generator/udn"
 	libovsdbops "github.com/ovn-org/ovn-kubernetes/go-controller/pkg/libovsdb/ops"
@@ -868,7 +868,7 @@ func (oc *SecondaryLayer3NetworkController) addUpdateLocalNodeEvent(udnNode *use
 						gwConfig.hostSubnets,
 						gwConfig.hostAddrs,
 						gwConfig.clusterSubnets,
-						gwConfig.gwLRPIPs,
+						gwConfig.gwLRPJoinIPs,
 						oc.SCTPSupport,
 						oc.ovnClusterLRPToJoinIfAddrs,
 						gwConfig.externalIPs,

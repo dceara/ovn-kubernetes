@@ -847,7 +847,7 @@ func (oc *SecondaryLayer2NetworkController) nodeGatewayConfig(gwLRPIPs []*net.IP
 	return &SecondaryL2GatewayConfig{
 		config:       l3GatewayConfig,
 		hostSubnets:  hostSubnets,
-		gwLRPJoinIPs: gwLRPJoinIPs,
+		gwLRPJoinIPs: gwLRPIPs,
 		externalIPs:  externalIPs,
 	}, nil
 }

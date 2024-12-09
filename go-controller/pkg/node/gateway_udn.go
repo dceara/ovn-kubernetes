@@ -480,7 +480,6 @@ func (udng *UserDefinedNetworkGateway) addUDNManagementPort() (netlink.Link, net
 // For L3 networks it parses the ovnNodeSubnets annotation, for L2 networks it returns the network subnets.
 func (udng *UserDefinedNetworkGateway) getLocalSubnets() ([]*net.IPNet, error) {
 	var networkLocalSubnets []*net.IPNet
-	var err error
 
 	// fetch subnets which we will use to get management port IP(s)
 	if udng.TopologyType() == types.Layer3Topology {
@@ -490,13 +489,13 @@ func (udng *UserDefinedNetworkGateway) getLocalSubnets() ([]*net.IPNet, error) {
 				udng.node.Name, udng.GetNetworkName(), err)
 		}
 		if len(udnNode.Spec.NodeSubnets) == 0 {
-			return fmt.Errorf("subnets are empty for UDN Node: %s, for node: %s, network %s",
+			return nil, fmt.Errorf("subnets are empty for UDN Node: %s, for node: %s, network %s",
 				udnNode.Name, udng.node.Name, udng.GetNetworkName())
 		}
 		for _, subnet := range udnNode.Spec.NodeSubnets {
 			_, n, err := net.ParseCIDR(string(subnet))
 			if err != nil {
-				return fmt.Errorf("failed to parse CIDR %q for node %s, network %s: %w",
+				return nil, fmt.Errorf("failed to parse CIDR %q for node %s, network %s: %w",
 					subnet, udng.node.Name, udng.GetNetworkName(), err)
 			}
 			networkLocalSubnets = append(networkLocalSubnets, n)
