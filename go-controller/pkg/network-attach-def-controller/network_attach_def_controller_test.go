@@ -437,7 +437,7 @@ func TestNetAttachDefinitionController(t *testing.T) {
 			}
 			nadController := &NetAttachDefinitionController{
 				nads:           map[string]string{},
-				networkManager: newNetworkManager("", tncm),
+				networkManager: newNetworkManager("", tncm, 1),
 				primaryNADs:    map[string]string{},
 			}
 
@@ -578,6 +578,7 @@ func TestSyncAll(t *testing.T) {
 				tncm,
 				wf,
 				nil,
+				1,
 			)
 			g.Expect(err).ToNot(gomega.HaveOccurred())
 

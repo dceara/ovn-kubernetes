@@ -3,11 +3,12 @@ package node
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"net"
 	"sigs.k8s.io/yaml"
-	"strings"
 
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -283,7 +284,7 @@ add rule inet ovn-kubernetes udn-isolation ip6 daddr @udn-pod-default-ips-v6 dro
 		Expect(err).NotTo(HaveOccurred())
 
 		testNCM := &nad.FakeNetworkControllerManager{}
-		nadController, err = networkAttachDefController.NewNetAttachDefinitionController("test", testNCM, wf, nil)
+		nadController, err = networkAttachDefController.NewNetAttachDefinitionController("test", testNCM, wf, nil, 1)
 		Expect(err).NotTo(HaveOccurred())
 
 		manager = NewUDNHostIsolationManager(true, true, wf.PodCoreInformer(), nadController)
