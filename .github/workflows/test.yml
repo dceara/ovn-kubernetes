@@ -202,6 +202,12 @@ jobs:
            COVERALLS=1 CONTAINER_RUNNABLE=1 make check
         popd
 
+    - name: Check custom OVN image build works
+      run: |
+        pushd dist/images
+          make fedora-dev
+        popd
+
     - name: Build docker image - from current pr branch
       if: steps.is_pr_image_build_needed.outputs.PR_IMAGE_RESTORED != 'true' && success()
       run: |
