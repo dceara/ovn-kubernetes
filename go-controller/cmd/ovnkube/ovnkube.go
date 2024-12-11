@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -428,6 +429,7 @@ func runOvnKube(ctx context.Context, runMode *ovnkubeRunMode, ovnClientset *util
 			err = fmt.Errorf("recovering from a panic in runOvnKube: %v", r)
 		}
 	}()
+	runtime.SetMutexProfileFraction(1)
 	startTime := time.Now()
 
 	if runMode.cleanupNode {
