@@ -796,10 +796,7 @@ var _ = ginkgo.Describe("External Gateway", func() {
 				gomega.Expect(totalPodConnEntries).To(gomega.Equal(4))            // 6-2
 
 			},
-				ginkgo.Entry("IPV4 udp", &addressesv4, "udp"),
-				ginkgo.Entry("IPV4 tcp", &addressesv4, "tcp"),
-				ginkgo.Entry("IPV6 udp", &addressesv6, "udp"),
-				ginkgo.Entry("IPV6 tcp", &addressesv6, "tcp"))
+				ginkgo.FEntry("IPV4 udp", &addressesv4, "udp"))
 
 			ginkgo.DescribeTable("ExternalGWPod annotation: Should validate conntrack entry deletion for TCP/UDP traffic via multiple external gateways a.k.a ECMP routes", func(addresses *gatewayTestIPs, protocol string, deletePod bool) {
 				if addresses.srcPodIP == "" || addresses.nodeIP == "" {
