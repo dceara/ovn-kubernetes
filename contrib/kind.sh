@@ -808,6 +808,8 @@ build_ovn_image() {
     # Find all built executables, but ignore the 'windows' directory if it exists
     find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
     echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
+    OVN_REPO=https://github.com/LorenzoBianconi/ovn
+    OVN_BRANCH=FDP-56-rework
     if [ "${OVN_REPO}" != "" -o "${OVN_BRANCH}" != "" ]; then
         local ovn_repo=${OVN_REPO:-"https://github.com/ovn-org/ovn"}
         local ovn_branch=${OVN_BRANCH:-main}
