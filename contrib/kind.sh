@@ -809,7 +809,7 @@ build_ovn_image() {
     find ../../go-controller/_output/go/bin/ -maxdepth 1 -type f -exec cp -f {} . \;
     echo "ref: $(git rev-parse  --symbolic-full-name HEAD)  commit: $(git rev-parse  HEAD)" > git_info
     if [ "${OVN_REPO}" != "" -o "${OVN_BRANCH}" != "" ]; then
-        local ovn_repo=${OVN_REPO:-https:://github.com/ovn-org/ovn}
+        local ovn_repo=${OVN_REPO:-"https://github.com/ovn-org/ovn"}
         local ovn_branch=${OVN_BRANCH:-main}
         local ovn_commit=$(git ls-remote $ovn_repo -b $ovn_branch |awk '{print $1}')
         $OCI_BIN build -t "${OVN_IMAGE}" --build-arg OVN_FROM=source --build-arg OVN_REPO=$ovn_repo --build-arg OVN_BRANCH=$ovn_branch --build-arg OVN_COMMIT=$ovn_commit -f Dockerfile.fedora .
