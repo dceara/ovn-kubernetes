@@ -728,6 +728,10 @@ ovs-server() {
   tail --follow=name ${OVS_LOGDIR}/ovs-vswitchd.log ${OVS_LOGDIR}/ovsdb-server.log &
   ovs_tail_pid=$!
   sleep 10
+
+  ovs-appctl vlog/set vconn:DBG
+  ovs-appctl vlog/disable-rate-limit
+
   while true; do
     if ! /usr/share/openvswitch/scripts/ovs-ctl status >/dev/null; then
       echo "OVS seems to have crashed, exiting"
