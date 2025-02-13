@@ -43,8 +43,8 @@ RUN rm rpm/rpmbuild/RPMS/x86_64/*devel*
 RUN git log -n 1
 
 # Clone OVN Source Code.
-ARG OVN_REPO=https://github.com/ovn-org/ovn.git
-ARG OVN_BRANCH=main
+ARG OVN_REPO=https://github.com/almusil/ovn.git
+ARG OVN_BRANCH=commit_all
 WORKDIR /root
 RUN git clone $OVN_REPO --single-branch --branch=$OVN_BRANCH
 

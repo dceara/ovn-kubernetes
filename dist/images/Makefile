@@ -34,7 +34,7 @@ endif
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-ubuntu:latest
 
 fedora: bld
-	${OCI_BIN} build -t ovn-kube-fedora -f Dockerfile.fedora .
+	${OCI_BIN} build -t ovn-kube-fedora -f Dockerfile.fedora.dev .
 	# ${OCI_BIN} login -u ovnkube docker.io/ovnkube
 	# ${OCI_BIN} push docker.io/ovnkube/ovn-daemonset-fedora:latest
 	./daemonset.sh --image=docker.io/ovnkube/ovn-daemonset-fedora:latest
