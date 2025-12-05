@@ -9,7 +9,7 @@
 # are built locally and included in the image (instead of the rpm)
 #
 
-ARG OVN_FROM=koji
+ARG OVN_FROM=source
 
 #############################################
 # Stage to get OVN and OVS RPMs from source #
@@ -25,8 +25,8 @@ RUN INSTALL_PKGS="git rpm-build dnf-plugins-core" && \
     dnf install --best --refresh -y --setopt=tsflags=nodocs $INSTALL_PKGS
 
 # Clone OVN Source Code.
-ARG OVN_REPO=https://github.com/ovn-org/ovn.git
-ARG OVN_GITREF=main
+ARG OVN_REPO=https://github.com/dceara/ovn.git
+ARG OVN_GITREF=tmp-main
 WORKDIR /root
 RUN mkdir ovn && pushd ovn && \
     git init && \
