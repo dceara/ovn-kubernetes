@@ -1,0 +1,238 @@
+apiVersion: k8s.ovn.org/v1
+kind: VTEP
+metadata:
+  name: evpn-vtep
+spec:
+  mode: Unmanaged
+  cidrs:
+    - 172.18.0.0/16
+
+---
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: evpn-routes
+spec:
+  nodeSelector: {}
+  frrConfigurationSelector: {}
+  networkSelectors:
+    - networkSelectionType: ClusterUserDefinedNetworks
+      clusterUserDefinedNetworkSelector:
+        networkSelector:
+          matchLabels:
+            evpn: "true"
+  targetVRF: auto
+  advertisements:
+    - PodNetwork
+
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  labels:
+    evpn: "true"
+  name: evpn-l2
+spec:
+  namespaceSelector:
+    matchLabels:
+      network: evpn-demo
+  network:
+    topology: Layer2
+    transport: EVPN
+    layer2:
+      role: Primary
+      subnets:
+        - 10.200.0.0/16
+    evpn:
+      vtep: evpn-vtep
+      macVRF:
+        vni: 20100
+        routeTarget: "65000:20100"
+      ipVRF:
+        vni: 20101
+        routeTarget: "65000:20101"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    k8s.ovn.org/primary-user-defined-network: evpn-l2
+    network: evpn-demo
+  name: evpn-demo
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nettools
+  namespace: evpn-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nettools
+  template:
+    metadata:
+      labels:
+        app: nettools
+    spec:
+      affinity:
+        # Added nodeAffinity to exclude the ovn-control-plane node
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - ovn-control-plane
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: nettools
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: nettools
+          image: docker.io/nicolaka/netshoot:v0.13
+          command: ["sleep", "infinity"]
+
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  labels:
+    evpn: "true"
+  name: evpn-l3
+spec:
+  namespaceSelector:
+    matchLabels:
+      network: evpn-l3-demo
+  network:
+    topology: Layer3
+    transport: EVPN
+    layer3:
+      role: Primary
+      subnets:
+        - cidr: 10.201.0.0/16
+          hostSubnet: 24
+    evpn:
+      vtep: evpn-vtep
+      ipVRF:
+        vni: 20201
+        routeTarget: "65000:20201"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    k8s.ovn.org/primary-user-defined-network: evpn-l3
+    network: evpn-l3-demo
+  name: evpn-l3-demo
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nettools
+  namespace: evpn-l3-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nettools
+  template:
+    metadata:
+      labels:
+        app: nettools
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - ovn-control-plane
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: nettools
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: nettools
+          image: docker.io/nicolaka/netshoot:v0.13
+          command: ["sleep", "infinity"]
+---
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  labels:
+    evpn: "true"
+  name: evpn-l3-new
+spec:
+  namespaceSelector:
+    matchLabels:
+      network: evpn-l3-new
+  network:
+    topology: Layer3
+    transport: EVPN
+    layer3:
+      role: Primary
+      subnets:
+        - cidr: 10.202.0.0/16
+          hostSubnet: 24
+    evpn:
+      vtep: evpn-vtep
+      ipVRF:
+        vni: 20202
+        routeTarget: "65000:20202"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    k8s.ovn.org/primary-user-defined-network: evpn-l3-new
+    network: evpn-l3-new
+  name: evpn-l3-new
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nettools
+  namespace: evpn-l3-new
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nettools
+  template:
+    metadata:
+      labels:
+        app: nettools
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - ovn-control-plane
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: nettools
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: nettools
+          image: docker.io/nicolaka/netshoot:v0.13
+          command: ["sleep", "infinity"]

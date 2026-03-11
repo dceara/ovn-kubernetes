@@ -39,7 +39,7 @@ import (
 )
 
 const (
-	vxlanPort = 4789
+	vxlanPort = 64789
 	// externalIDEVPNVTEP is the external-id key used to tag OVS ports with their VTEP name
 	externalIDEVPNVTEP = "evpn-vtep"
 	ovsBridgeInt       = "br-int"
