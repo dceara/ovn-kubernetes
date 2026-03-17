@@ -1031,9 +1031,9 @@ func (c *Controller) validateEVPN(cudn *userdefinednetworkv1.ClusterUserDefinedN
 	if !config.OVNKubernetesFeature.EnableEVPN {
 		return fmt.Errorf("EVPN transport requested but EVPN feature is not enabled")
 	}
-	if config.Gateway.Mode != config.GatewayModeLocal {
-		return fmt.Errorf("EVPN transport requested but EVPN feature is only supported in local gateway mode")
-	}
+	// if config.Gateway.Mode != config.GatewayModeLocal {
+	// 	return fmt.Errorf("EVPN transport requested but EVPN feature is only supported in local gateway mode")
+	// }
 
 	// CEL validation ensures EVPN is set when transport is EVPN.
 	vtepName := cudn.Spec.Network.EVPN.VTEP

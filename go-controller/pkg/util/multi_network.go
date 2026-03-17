@@ -1893,7 +1893,7 @@ func IsRouteAdvertisementsEnabled() bool {
 }
 
 func IsEVPNEnabled() bool {
-	return IsRouteAdvertisementsEnabled() && config.Gateway.Mode == config.GatewayModeLocal && config.OVNKubernetesFeature.EnableEVPN
+	return IsRouteAdvertisementsEnabled() && config.OVNKubernetesFeature.EnableEVPN
 }
 
 // IsPreconfiguredUDNAddressesEnabled indicates if user defined IPs / MAC

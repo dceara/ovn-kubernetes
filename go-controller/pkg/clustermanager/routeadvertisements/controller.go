@@ -536,9 +536,9 @@ func (c *Controller) generateFRRConfigurations(ra *ratypes.RouteAdvertisements) 
 	if hasEVPNConfig && !config.OVNKubernetesFeature.EnableEVPN {
 		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is not enabled", errConfig)
 	}
-	if hasEVPNConfig && config.Gateway.Mode != config.GatewayModeLocal {
-		return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is only supported in local gateway mode", errConfig)
-	}
+	// if hasEVPNConfig && config.Gateway.Mode != config.GatewayModeLocal {
+	// 	return nil, nil, fmt.Errorf("%w: EVPN networks selected but EVPN feature is only supported in local gateway mode", errConfig)
+	// }
 	// Require a router with default VRF for any EVPN configuration, since the
 	// global EVPN section with advertise-all-vni is required for EVPN to work properly.
 	if hasEVPNConfig && !frrRouterVRFs.Has("") {
