@@ -505,13 +505,19 @@ func (c *Controller) getVIDVNIMappings(networks []evpnNetworkInfo) []netlinkdevi
 // and L2VNI-to-VRF association. Uses NDM's ListDevicesByVLANParent to find
 // current SVIs for this bridge.
 func (c *Controller) reconcileSVIs(bridgeName string, networks []evpnNetworkInfo) error {
+	node, _ := c.watchFactory.GetNode(c.nodeName)
+	l3GwConf, _ := util.ParseNodeL3GatewayAnnotation(node)
+
 	desiredSVIs := sets.New[string]()
 	for _, net := range networks {
 		if net.ipVRFVID != 0 {
 			desiredSVIs.Insert(net.l3SVIName)
 			if err := c.ndm.EnsureLink(netlinkdevicemanager.DeviceConfig{
 				Link: &netlink.Vlan{
-					LinkAttrs: netlink.LinkAttrs{Name: net.l3SVIName},
+					LinkAttrs: netlink.LinkAttrs{
+						Name: net.l3SVIName,
+						HardwareAddr: l3GwConf.MACAddress,
+					},
 					VlanId:    net.ipVRFVID,
 				},
 				VLANParent: bridgeName,
