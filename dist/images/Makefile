@@ -23,7 +23,7 @@ endif
 IMAGE ?= ovn-daemonset-fedora
 
 OVN_REPO ?= https://github.com/ovn-org/ovn
-OVN_GITREF ?=
+OVN_GITREF ?= main
 ifeq ($(OVN_GITREF),)
 OVN_FROM := koji
 else
