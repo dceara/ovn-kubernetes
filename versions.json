@@ -1,5 +1,10 @@
 [
   {
+    "version": "master",
+    "title": "Master (Dev)",
+    "aliases": []
+  },
+  {
     "version": "1.4-bump-ovn-26.03.2-122.fc44",
     "title": "1.4-bump-ovn-26.03.2-122.fc44 (Latest)",
     "aliases": [
